@@ -20,6 +20,7 @@ import {
   Plus,
   Settings,
   Share2,
+  Trophy,
 } from "lucide-react";
 
 import { useSkyjoSettings, type SkyjoSettings } from "@/lib/skyjo/settings";
@@ -1525,44 +1526,104 @@ function Summary({
   settings: SkyjoSettings;
   onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
-  const ranking = [...view.players].sort((a, b) => a.total - b.total);
+  const finished = view.phase === "over";
+  const placed = ranked(view.players);
+  const spotlight = finished ? gameWinners(view) : roundWinners(view);
+  const spotlightScore = finished
+    ? (spotlight[0]?.total ?? 0)
+    : roundPoints(view, spotlight[0]?.id);
+  const you = placed.find((entry) => entry.player.isYou);
   return (
     <Shell onQuit={onQuit} settings={settings} onSettings={onSettings}>
-      <h2 className="text-center text-2xl font-extrabold">
-        {view.phase === "over" ? "Partie terminée" : `Manche ${view.round}`}
-      </h2>
-      <p className="mt-1 text-center text-sm text-white/70">{view.hint}</p>
-      <ul className="mt-4 flex flex-col gap-3">
-        {ranking.map((player, index) => {
+      <p className="text-center text-sm font-bold text-white/60">
+        {finished ? "Partie terminée" : `Manche ${view.round}`}
+      </p>
+      <div className="mt-3 rounded-3xl border border-amber-200/30 bg-gradient-to-b from-amber-300/25 to-white/5 px-5 py-5 text-center">
+        <Trophy className="mx-auto size-8 text-amber-300" aria-hidden />
+        <p className="mt-2 text-xs font-bold tracking-[0.22em] text-amber-100/80">
+          {finished
+            ? spotlight.length > 1
+              ? "VAINQUEURS"
+              : "VAINQUEUR"
+            : "MEILLEURE MANCHE"}
+        </p>
+        <p className="mt-1 text-3xl leading-tight font-extrabold tracking-tight text-balance">
+          {joinNames(spotlight.map((player) => player.name))}
+        </p>
+        <p className="mt-1 text-lg font-bold text-amber-100">
+          {spotlightScore} pts
+        </p>
+        {spotlight.some((player) => player.isYou) ? (
+          <p className="mt-1 text-sm font-bold text-amber-200">
+            {spotlight.length > 1
+              ? "Tu partages la première place"
+              : "C’est toi"}
+          </p>
+        ) : null}
+      </div>
+      {you ? (
+        <p className="mt-3 text-center text-sm font-extrabold text-amber-100">
+          {standingLine(you, placed)}
+        </p>
+      ) : null}
+      <p className="mt-5 text-center text-xs font-bold tracking-[0.22em] text-white/45">
+        CLASSEMENT
+      </p>
+      <ol className="mt-2 flex flex-col gap-2">
+        {placed.map(({ player, place }) => {
           const score = view.summary?.find(
             (entry) => entry.playerId === player.id
           );
-          const winner = view.winners.includes(player.id);
+          const color =
+            AVATAR[view.players.findIndex((entry) => entry.id === player.id)] ??
+            AVATAR[0];
           return (
-            <li key={player.id} className="rounded-2xl bg-white/10 p-3">
-              <div className="flex items-baseline justify-between gap-3">
+            <li
+              key={player.id}
+              className={`flex items-center gap-3 rounded-2xl p-2.5 ${
+                player.isYou
+                  ? "border-2 border-amber-300 bg-amber-300/15"
+                  : "border-2 border-transparent bg-white/10"
+              }`}
+            >
+              <RankBadge place={place} />
+              <span
+                className={`grid size-9 shrink-0 place-items-center rounded-full text-sm font-extrabold ${color}`}
+                aria-hidden
+              >
+                {initial(player.name)}
+              </span>
+              <div className="min-w-0 flex-1">
                 <p className="flex min-w-0 items-center gap-1.5 font-extrabold">
                   <Presence player={player} />
-                  <span className="truncate">
-                    {view.phase === "over" ? `${index + 1}. ` : ""}
-                    {player.name}
-                    {winner ? " · gagne" : ""}
-                  </span>
+                  <span className="truncate">{player.name}</span>
+                  {player.isYou ? (
+                    <span className="shrink-0 rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-[#1a1405]">
+                      TOI
+                    </span>
+                  ) : null}
                   <PresenceNote player={player} />
                 </p>
-                <p className="text-right text-sm">
-                  {score?.doubled
-                    ? `${score.raw} ×2 = ${score.points}`
-                    : `${score?.points ?? 0} pts`}
-                  <span className="block text-white/60">
-                    Total {player.total}
-                  </span>
+                {score?.doubled ? (
+                  <p className="text-xs font-semibold text-amber-100/80">
+                    {score.raw} ×2 cette manche
+                  </p>
+                ) : null}
+              </div>
+              <div className="text-right">
+                <p className="text-base font-extrabold tabular-nums">
+                  {player.total} pts
                 </p>
+                {score ? (
+                  <p className="text-[11px] font-semibold text-white/50 tabular-nums">
+                    Manche {score.points}
+                  </p>
+                ) : null}
               </div>
             </li>
           );
         })}
-      </ul>
+      </ol>
       {view.phase === "between" ? (
         <button
           type="button"
@@ -1583,6 +1644,102 @@ function Summary({
       )}
     </Shell>
   );
+}
+
+const AVATAR = [
+  "bg-amber-300 text-[#1a1405]",
+  "bg-emerald-400 text-[#052117]",
+  "bg-sky-400 text-[#041820]",
+  "bg-rose-400 text-[#2a0810]",
+  "bg-violet-400 text-[#160826]",
+  "bg-orange-400 text-[#2a1204]",
+  "bg-teal-300 text-[#04201c]",
+  "bg-fuchsia-400 text-[#240818]",
+];
+
+function RankBadge({ place }: { place: number }) {
+  const tone =
+    place === 1
+      ? "bg-amber-300 text-[#1a1405]"
+      : place === 2
+        ? "bg-zinc-300 text-[#1a1405]"
+        : place === 3
+          ? "bg-orange-400 text-[#2a1204]"
+          : "bg-white/15 text-white/80";
+  return (
+    <span
+      className={`grid size-7 shrink-0 place-items-center rounded-full text-xs font-extrabold ${tone}`}
+    >
+      {place}
+    </span>
+  );
+}
+
+function ranked(players: ViewPlayer[]) {
+  const sorted = [...players].sort(
+    (a, b) => a.total - b.total || a.name.localeCompare(b.name, "fr")
+  );
+  let place = 1;
+  return sorted.map((player, index) => {
+    if (index > 0 && player.total !== sorted[index - 1]?.total) {
+      place = index + 1;
+    }
+    return { player, place };
+  });
+}
+
+function gameWinners(view: GameView) {
+  const winners = view.players.filter((player) =>
+    view.winners.includes(player.id)
+  );
+  return winners.length > 0 ? winners : view.players.slice(0, 1);
+}
+
+function roundWinners(view: GameView) {
+  const scores = view.summary ?? [];
+  if (scores.length === 0) return gameWinners(view);
+  const best = Math.min(...scores.map((score) => score.points));
+  const ids = new Set(
+    scores
+      .filter((score) => score.points === best)
+      .map((score) => score.playerId)
+  );
+  const winners = view.players.filter((player) => ids.has(player.id));
+  return winners.length > 0 ? winners : gameWinners(view);
+}
+
+function roundPoints(view: GameView, playerId: string | undefined) {
+  return (
+    view.summary?.find((score) => score.playerId === playerId)?.points ?? 0
+  );
+}
+
+function standingLine(
+  you: { player: ViewPlayer; place: number },
+  placed: { player: ViewPlayer; place: number }[]
+) {
+  const shared =
+    placed.filter((entry) => entry.player.total === you.player.total).length >
+    1;
+  if (you.place === 1) {
+    return shared ? "Tu partages la première place" : "Tu es en tête";
+  }
+  const gap = you.player.total - (placed[0]?.player.total ?? you.player.total);
+  return `Tu es ${placeLabel(you.place)} · ${gap} pts du premier`;
+}
+
+function placeLabel(place: number) {
+  return place === 1 ? "1er" : `${place}e`;
+}
+
+function joinNames(names: string[]) {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} et ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} et ${names.at(-1)}`;
+}
+
+function initial(name: string) {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? "?";
 }
 
 const primaryButton =

@@ -6,12 +6,26 @@ import { useRouter } from "next/navigation";
 import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
 import { applyAction, createRoom, project } from "@/lib/skyjo/engine";
 import { getPlayerId, getSavedName } from "@/lib/skyjo/identity";
-import type { Action, BotLevel, GameView, Room } from "@/lib/skyjo/types";
+import type {
+  Action,
+  BotLevel,
+  GameView,
+  Room,
+  RoundScore,
+} from "@/lib/skyjo/types";
 import { GameScreen } from "@/components/skyjo/GameScreen";
 
 const LOCAL_KEY = "skyjo-local-room";
 
-export function LocalGame({ bots, level }: { bots: number; level: BotLevel }) {
+export function LocalGame({
+  bots,
+  level,
+  preview = null,
+}: {
+  bots: number;
+  level: BotLevel;
+  preview?: "manche" | "partie" | null;
+}) {
   const router = useRouter();
   const [room, setRoom] = useState<Room | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +36,10 @@ export function LocalGame({ bots, level }: { bots: number; level: BotLevel }) {
   useEffect(() => {
     if (ready.current) return;
     ready.current = true;
+    if (preview) {
+      setRoom(previewRoom(getSavedName() || "Toi", preview));
+      return;
+    }
     const saved = sessionStorage.getItem(LOCAL_KEY);
     if (saved) {
       try {
@@ -36,16 +54,16 @@ export function LocalGame({ bots, level }: { bots: number; level: BotLevel }) {
       return;
     }
     setRoom(createLocalRoom(getSavedName() || "Toi", bots, level));
-  }, [bots, level, router]);
+  }, [bots, level, preview, router]);
 
   useEffect(() => {
-    if (!room) return;
+    if (!room || preview) return;
     sessionStorage.setItem(LOCAL_KEY, JSON.stringify(room));
     const next = stepBot(room);
     if (next === room) return;
     const timer = window.setTimeout(() => setRoom(next), BOT_BEAT_MS);
     return () => window.clearTimeout(timer);
-  }, [room]);
+  }, [preview, room]);
 
   if (!room) {
     return (
@@ -79,11 +97,79 @@ export function LocalGame({ bots, level }: { bots: number; level: BotLevel }) {
       onAction={act}
       error={error}
       onQuit={() => {
-        sessionStorage.removeItem(LOCAL_KEY);
+        if (!preview) sessionStorage.removeItem(LOCAL_KEY);
         router.push("/");
       }}
     />
   );
+}
+
+function previewRoom(name: string, preview: "manche" | "partie"): Room {
+  const you = getPlayerId();
+  const players = [
+    { id: you, name, total: 28 },
+    { id: "bot-1", name: "Léo", total: 6 },
+    { id: "bot-3", name: "Noé", total: 19 },
+    { id: "bot-2", name: "Mia", total: 41 },
+  ];
+  const summary: RoundScore[] = [
+    {
+      playerId: "bot-1",
+      name: "Léo",
+      raw: 2,
+      points: 2,
+      doubled: false,
+      total: 6,
+    },
+    {
+      playerId: "bot-3",
+      name: "Noé",
+      raw: 9,
+      points: 9,
+      doubled: false,
+      total: 19,
+    },
+    {
+      playerId: you,
+      name,
+      raw: 7,
+      points: 14,
+      doubled: true,
+      total: 28,
+    },
+    {
+      playerId: "bot-2",
+      name: "Mia",
+      raw: 16,
+      points: 16,
+      doubled: false,
+      total: 41,
+    },
+  ];
+  return {
+    code: "LOCAL",
+    hostId: you,
+    revision: 1,
+    seq: 1,
+    players: players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      isBot: player.id !== you,
+      total: player.total,
+      grid: [],
+    })),
+    deck: [],
+    discard: [],
+    current: 0,
+    phase: { kind: preview === "partie" ? "over" : "between" },
+    round: 2,
+    closerId: you,
+    pending: [],
+    lastRound: false,
+    summary,
+    lastEvent: "",
+    feed: [],
+  };
 }
 
 function createLocalRoom(name: string, bots: number, level: BotLevel) {
