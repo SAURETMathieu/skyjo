@@ -162,6 +162,8 @@ export function project(room: Room, youId: string): GameView {
       name: player.name,
       isBot: player.isBot,
       isYou: player.id === youId,
+      connected: true,
+      left: false,
       total: player.total,
       current: player.id === current?.id && room.phase.kind !== "lobby",
       grid: viewGrid(player.grid, reveal),

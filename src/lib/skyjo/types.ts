@@ -82,6 +82,8 @@ export type ViewPlayer = {
   name: string;
   isBot: boolean;
   isYou: boolean;
+  connected: boolean;
+  left: boolean;
   total: number;
   current: boolean;
   grid: ViewCell[];

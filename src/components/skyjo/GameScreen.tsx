@@ -403,9 +403,11 @@ function Lobby({
             key={player.id}
             className="flex items-center justify-between rounded-2xl bg-white/10 px-4 py-3"
           >
-            <span className="flex items-center gap-2 font-bold">
+            <span className="flex min-w-0 items-center gap-2 font-bold">
+              <Presence player={player} />
               {player.isBot ? <Bot className="size-4" /> : null}
-              {player.name}
+              <span className="truncate">{player.name}</span>
+              <PresenceNote player={player} />
               {player.id === view.hostId ? (
                 <span className="text-xs font-semibold text-amber-200">
                   Hôte
@@ -483,6 +485,9 @@ function Board({
 }) {
   const you = view.players.find((player) => player.isYou);
   const others = view.players.filter((player) => !player.isYou);
+  const presenceKey = others
+    .map((player) => `${player.id}:${player.connected}:${player.left}`)
+    .join("|");
 
   const current = view.players.find((player) => player.current);
   const spotlight = view.phase !== "opening";
@@ -543,7 +548,14 @@ function Board({
     if (!list || !bottom || !frame) return;
 
     const measure = () => {
-      const card = list.querySelector("article");
+      const cards = [...list.querySelectorAll("article")];
+      const card = cards.reduce<Element | null>((tallest, item) => {
+        if (!tallest) return item;
+        return item.getBoundingClientRect().height >
+          tallest.getBoundingClientRect().height
+          ? item
+          : tallest;
+      }, null);
       if (!card || others.length < 2) {
         setRows(1);
         return;
@@ -569,7 +581,7 @@ function Board({
     observer.observe(frame);
     observer.observe(bottom);
     return () => observer.disconnect();
-  }, [others.length, view.revision]);
+  }, [others.length, view.revision, presenceKey]);
 
   useEffect(() => () => stopListeners.current?.(), []);
 
@@ -1145,8 +1157,10 @@ function Board({
             }`}
           >
             <div className="mb-2 flex items-center gap-2 px-1">
-              <h2 className="min-w-0 flex-1 truncate text-sm font-extrabold">
-                {you.name}
+              <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-extrabold">
+                <Presence player={you} />
+                <span className="truncate">{you.name}</span>
+                <PresenceNote player={you} />
               </h2>
               <p
                 className="shrink-0 text-xs font-bold text-white/65 tabular-nums"
@@ -1301,6 +1315,34 @@ function FlyingCard({ flight }: { flight: Flight }) {
   );
 }
 
+function Presence({ player }: { player: ViewPlayer }) {
+  if (player.isBot) return null;
+  const online = player.connected && !player.left;
+  const label = player.left
+    ? "A quitté la partie"
+    : online
+      ? "En ligne"
+      : "Hors ligne";
+  return (
+    <span
+      className={`inline-block size-2 shrink-0 rounded-full ring-1 ring-black/40 ${
+        online ? "bg-emerald-400" : "bg-rose-500"
+      }`}
+      title={label}
+      aria-label={label}
+    />
+  );
+}
+
+function PresenceNote({ player }: { player: ViewPlayer }) {
+  if (player.isBot || (player.connected && !player.left)) return null;
+  return (
+    <span className="shrink-0 text-xs font-semibold text-rose-200">
+      {player.left ? "A quitté" : "Hors ligne"}
+    </span>
+  );
+}
+
 function Opponent({
   player,
   active,
@@ -1316,10 +1358,15 @@ function Opponent({
         active ? "bg-amber-200/20 ring-amber-300" : "bg-black/25 ring-white/30"
       }`}
     >
-      <p className="flex items-center gap-1.5 text-[10px] leading-none">
+      <p className="flex items-center gap-1 text-[10px] leading-none">
+        <Presence player={player} />
         <span
           className={`min-w-0 flex-1 truncate text-[11px] font-extrabold ${
-            active ? "text-amber-100" : "text-white/75"
+            player.left
+              ? "text-rose-200"
+              : active
+                ? "text-amber-100"
+                : "text-white/75"
           }`}
         >
           {player.name}
@@ -1337,6 +1384,11 @@ function Opponent({
           {player.total}
         </span>
       </p>
+      {player.left || (!player.isBot && !player.connected) ? (
+        <p className="mt-0.5 truncate text-[9px] leading-3 font-bold text-rose-200">
+          {player.left ? "A quitté" : "Hors ligne"}
+        </p>
+      ) : null}
       <div
         className={`mt-1 grid grid-cols-4 gap-0.5 ${quiet ? "opacity-45" : ""}`}
       >
@@ -1470,10 +1522,14 @@ function Summary({
           return (
             <li key={player.id} className="rounded-2xl bg-white/10 p-3">
               <div className="flex items-baseline justify-between gap-3">
-                <p className="font-extrabold">
-                  {view.phase === "over" ? `${index + 1}. ` : ""}
-                  {player.name}
-                  {winner ? " · gagne" : ""}
+                <p className="flex min-w-0 items-center gap-1.5 font-extrabold">
+                  <Presence player={player} />
+                  <span className="truncate">
+                    {view.phase === "over" ? `${index + 1}. ` : ""}
+                    {player.name}
+                    {winner ? " · gagne" : ""}
+                  </span>
+                  <PresenceNote player={player} />
                 </p>
                 <p className="text-right text-sm">
                   {score?.doubled

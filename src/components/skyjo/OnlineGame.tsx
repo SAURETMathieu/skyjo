@@ -8,6 +8,7 @@ import {
   fetchRoom,
   isSnapshotError,
   joinRemoteRoom,
+  leaveRemoteRoom,
   sendAction,
 } from "@/lib/skyjo/remote";
 import type { Action, GameView, RoomSnapshot } from "@/lib/skyjo/types";
@@ -33,11 +34,14 @@ export function OnlineGame({ code }: { code: string }) {
     if (!playerId) return;
     let stop = false;
     let timer = 0;
+    let announced = false;
 
     async function poll() {
+      const back = !announced;
       try {
-        const next = await fetchRoom(code, playerId);
+        const next = await fetchRoom(code, playerId, back);
         if (stop) return;
+        announced = true;
         setMissing(false);
         setSnapshot((current) => {
           if (
@@ -180,7 +184,11 @@ export function OnlineGame({ code }: { code: string }) {
     <GameScreen
       view={snapshot.view}
       onAction={act}
-      onQuit={() => router.push("/")}
+      onQuit={() => {
+        void leaveRemoteRoom(code, playerId)
+          .catch(() => undefined)
+          .finally(() => router.push("/"));
+      }}
       busy={busy}
       error={error}
     />

@@ -1,4 +1,4 @@
-import { joinRemoteRoom, play, readRoom } from "@/lib/skyjo/rooms";
+import { joinRemoteRoom, leaveRoom, play, readRoom } from "@/lib/skyjo/rooms";
 import type { Action } from "@/lib/skyjo/types";
 
 export const runtime = "nodejs";
@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 type Body =
   | { kind: "join"; playerId?: string; name?: string }
+  | { kind: "leave"; playerId?: string }
   | { kind: "play"; playerId?: string; revision?: number; action?: Action };
 
 export async function GET(
@@ -13,8 +14,13 @@ export async function GET(
   context: { params: Promise<{ code: string }> }
 ) {
   const { code } = await context.params;
-  const playerId = new URL(request.url).searchParams.get("playerId") ?? "";
-  const snapshot = await readRoom(normalize(code), playerId);
+  const url = new URL(request.url);
+  const playerId = url.searchParams.get("playerId") ?? "";
+  const snapshot = await readRoom(
+    normalize(code),
+    playerId,
+    url.searchParams.get("back") === "1"
+  );
   if (!snapshot) {
     return Response.json(
       { error: "Aucune partie avec ce code." },
@@ -45,6 +51,17 @@ export async function POST(
       return Response.json({ error: result.error }, { status: 400 });
     }
     return Response.json({ snapshot: result.snapshot });
+  }
+
+  if (body?.kind === "leave") {
+    const snapshot = await leaveRoom(normalize(code), playerId);
+    if (!snapshot) {
+      return Response.json(
+        { error: "Aucune partie avec ce code." },
+        { status: 404 }
+      );
+    }
+    return Response.json({ snapshot });
   }
 
   if (body?.kind === "play") {

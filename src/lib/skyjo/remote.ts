@@ -34,9 +34,10 @@ export async function createRemoteRoom(playerId: string, name: string) {
   return body.snapshot.view;
 }
 
-export async function fetchRoom(code: string, playerId: string) {
+export async function fetchRoom(code: string, playerId: string, back = false) {
+  const backQuery = back ? "&back=1" : "";
   const body = await request(
-    `/api/rooms/${code}?playerId=${encodeURIComponent(playerId)}`
+    `/api/rooms/${code}?playerId=${encodeURIComponent(playerId)}${backQuery}`
   );
   if (!body.snapshot) throw new Error("Partie introuvable.");
   return body.snapshot;
@@ -53,6 +54,14 @@ export async function joinRemoteRoom(
   });
   if (!body.snapshot?.member) throw new Error("Impossible de rejoindre.");
   return body.snapshot;
+}
+
+export async function leaveRemoteRoom(code: string, playerId: string) {
+  await request(`/api/rooms/${code}`, {
+    method: "POST",
+    body: JSON.stringify({ kind: "leave", playerId }),
+    keepalive: true,
+  });
 }
 
 export async function sendAction(

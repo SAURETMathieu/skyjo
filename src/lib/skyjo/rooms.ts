@@ -6,12 +6,16 @@ import type { Action, Room, RoomSnapshot } from "@/lib/skyjo/types";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_TTL = 1000 * 60 * 60 * 8;
+const FRESH_MS = 5000;
+const SEEN_WRITE_MS = 1000;
 const BUCKET = "skyjo-rooms";
 
 type Entry = {
   room: Room;
   createdAt: number;
   lastBot: number;
+  seen: Record<string, number>;
+  left: string[];
 };
 
 const store = globalThis as typeof globalThis & {
@@ -31,7 +35,13 @@ export function createRemoteRoom(playerId: string, name: string) {
       const room = createRoom({ code, hostId: playerId, hostName: name });
       const created = await save(
         code,
-        { room, createdAt: Date.now(), lastBot: 0 },
+        {
+          room,
+          createdAt: Date.now(),
+          lastBot: 0,
+          seen: { [playerId]: Date.now() },
+          left: [],
+        },
         true
       );
       if (!created) continue;
@@ -44,12 +54,14 @@ export function createRemoteRoom(playerId: string, name: string) {
   });
 }
 
-export function readRoom(code: string, playerId: string) {
+export function readRoom(code: string, playerId: string, restore = false) {
   return withLock(code, async () => {
     const entry = await load(code);
     if (!entry) return null;
-    if (advance(entry)) await save(code, entry);
-    return snapshot(entry.room, playerId);
+    const stepped = advance(entry);
+    const noted = notePresence(entry, playerId, restore);
+    if (stepped || noted) await save(code, entry);
+    return snapshot(entry, playerId);
   });
 }
 
@@ -60,8 +72,29 @@ export function joinRemoteRoom(code: string, playerId: string, name: string) {
     const step = joinRoom(entry.room, playerId, name);
     if (!step.ok) return { error: step.error ?? "Impossible de rejoindre." };
     entry.room = step.state;
+    notePresence(entry, playerId, true);
     await save(code, entry);
-    return { snapshot: snapshot(entry.room, playerId) };
+    return { snapshot: snapshot(entry, playerId) };
+  });
+}
+
+export function leaveRoom(code: string, playerId: string) {
+  return withLock(code, async () => {
+    const entry = await load(code);
+    if (!entry) return null;
+    const player = entry.room.players.find(
+      (seat) => seat.id === playerId && !seat.isBot
+    );
+    if (!player) return snapshot(entry, playerId);
+    if (!entry.left.includes(playerId)) {
+      entry.left.push(playerId);
+      entry.room.lastEvent = `${player.name} a quitté la partie`;
+      entry.room.feed = [...entry.room.feed, entry.room.lastEvent].slice(-8);
+      entry.room.revision += 1;
+    }
+    entry.seen[playerId] = Date.now();
+    await save(code, entry);
+    return snapshot(entry, playerId);
   });
 }
 
@@ -79,19 +112,20 @@ export function play(
     if (!openingFlip && entry.room.revision !== revision) {
       return {
         error: "La partie a avancé." as const,
-        snapshot: snapshot(entry.room, playerId),
+        snapshot: snapshot(entry, playerId),
       };
     }
     const step = applyAction(entry.room, playerId, action);
     if (!step.ok) {
       return {
         error: step.error ?? "Coup refusé.",
-        snapshot: snapshot(entry.room, playerId),
+        snapshot: snapshot(entry, playerId),
       };
     }
     entry.room = step.state;
+    notePresence(entry, playerId, true);
     await save(code, entry);
-    return { snapshot: snapshot(entry.room, playerId) };
+    return { snapshot: snapshot(entry, playerId) };
   });
 }
 
@@ -105,7 +139,27 @@ function advance(entry: Entry) {
   return true;
 }
 
-function snapshot(room: Room, playerId: string): RoomSnapshot {
+function notePresence(entry: Entry, playerId: string, restore: boolean) {
+  const player = entry.room.players.find(
+    (seat) => seat.id === playerId && !seat.isBot
+  );
+  if (!player) return false;
+  const now = Date.now();
+  const previous = entry.seen[playerId] ?? 0;
+  entry.seen[playerId] = now;
+  let changed = now - previous >= SEEN_WRITE_MS;
+  if (restore && entry.left.includes(playerId)) {
+    entry.left = entry.left.filter((id) => id !== playerId);
+    entry.room.lastEvent = `${player.name} est de retour`;
+    entry.room.feed = [...entry.room.feed, entry.room.lastEvent].slice(-8);
+    entry.room.revision += 1;
+    changed = true;
+  }
+  return changed;
+}
+
+function snapshot(entry: Entry, playerId: string): RoomSnapshot {
+  const room = entry.room;
   if (!room.players.some((player) => player.id === playerId)) {
     return {
       member: false,
@@ -119,7 +173,17 @@ function snapshot(room: Room, playerId: string): RoomSnapshot {
       })),
     };
   }
-  return { member: true, view: project(room, playerId) };
+  const now = Date.now();
+  const gone = new Set(entry.left);
+  const view = project(room, playerId);
+  view.players = view.players.map((player) => {
+    const left = !player.isBot && gone.has(player.id);
+    const seen = entry.seen[player.id];
+    const connected =
+      player.isBot || (!left && (seen === undefined || now - seen < FRESH_MS));
+    return { ...player, connected, left };
+  });
+  return { member: true, view };
 }
 
 async function makeCode() {
@@ -163,6 +227,8 @@ async function load(code: string) {
   if (!client) {
     const entry = memory.get(code);
     if (!entry) return null;
+    entry.seen ??= {};
+    entry.left ??= [];
     if (Date.now() - entry.createdAt > ROOM_TTL) {
       memory.delete(code);
       return null;
@@ -187,12 +253,19 @@ async function load(code: string) {
     throw new Error(error.message);
   }
 
-  const entry = JSON.parse(await data.text()) as Entry;
-  if (Date.now() - entry.createdAt > ROOM_TTL) {
+  const raw = JSON.parse(await data.text()) as Partial<Entry>;
+  if (!raw.room || typeof raw.createdAt !== "number") return null;
+  if (Date.now() - raw.createdAt > ROOM_TTL) {
     await client.storage.from(BUCKET).remove([`${code}.json`]);
     return null;
   }
-  return entry;
+  return {
+    room: raw.room,
+    createdAt: raw.createdAt,
+    lastBot: raw.lastBot ?? 0,
+    seen: raw.seen ?? {},
+    left: raw.left ?? [],
+  };
 }
 
 async function save(code: string, entry: Entry, fresh = false) {
