@@ -124,12 +124,15 @@ function placeHeld(
   }
   const hidden = hiddenIndexes(player);
   if (hidden.length === 1) {
-    if (preferFlipClose(room, player, incoming, level)) {
+    if (worstFlipStillWins(room, player, level)) {
       return { playerId: player.id, action: { type: "discard-drawn" } };
     }
     const cover = coverIndex(player, incoming, level);
     if (cover !== null) {
-      return { playerId: player.id, action: { type: "swap", index: cover } };
+      return {
+        playerId: player.id,
+        action: { type: "swap", index: cover },
+      };
     }
   }
   return { playerId: player.id, action: { type: "discard-drawn" } };
@@ -163,13 +166,13 @@ function bestOffer(
     }
   }
   const hidden = hiddenIndexes(player);
-  if (
-    hidden.length === 1 &&
-    closingPays(room, player, incoming, stats.average, level)
-  ) {
+  if (hidden.length === 1 && closingPays(room, player, incoming, level)) {
+    const last = hidden[0] ?? 0;
+    const score = closeScore(player, last, incoming);
     offers.push({
-      index: hidden[0] ?? 0,
-      saved: Math.max(8, stats.average - incoming),
+      index: last,
+      saved:
+        level === "hard" ? 1000 - score : Math.max(8, stats.average - incoming),
     });
   } else if (
     hidden.length > 1 &&
@@ -184,8 +187,19 @@ function bestOffer(
     const parked = pairSlot(player, incoming);
     if (parked !== null) offers.push({ index: parked, saved: 2.5 });
   }
-  offers.sort((a, b) => b.saved - a.saved || a.index - b.index);
-  return offers[0]?.index ?? null;
+  const last = hidden.length === 1 ? hidden[0] : undefined;
+  const kept =
+    level === "hard" && last !== undefined
+      ? offers.flatMap((offer) => {
+          if (offer.index !== last) return [offer];
+          const score = closeScore(player, last, incoming);
+          return sureWin(room, player.id, score)
+            ? [{ index: offer.index, saved: 1000 - score }]
+            : [];
+        })
+      : offers;
+  kept.sort((a, b) => b.saved - a.saved || a.index - b.index);
+  return kept[0]?.index ?? null;
 }
 
 function enoughGain(
@@ -253,29 +267,104 @@ function closingPays(
   room: Room,
   player: Player,
   incoming: number,
-  expectation: number,
   level: Strength
 ) {
   if (hiddenIndexes(player).length !== 1) return false;
-  const known = sumFaceUp(player);
-  if (level === "normal") return known + incoming <= 8;
-  return (
-    known + incoming + 1 < opponentOutlook(room, player.id, expectation) &&
-    incoming <= expectation
-  );
+  if (level === "normal") return sumFaceUp(player) + incoming <= 8;
+  const last = hiddenIndexes(player)[0];
+  if (last === undefined) return false;
+  return sureWin(room, player.id, closeScore(player, last, incoming));
 }
 
-function preferFlipClose(
-  room: Room,
-  player: Player,
-  incoming: number,
-  level: Strength
-) {
+function worstFlipStillWins(room: Room, player: Player, level: Strength) {
   if (level !== "hard" || hiddenIndexes(player).length !== 1) return false;
-  const expectation = unseenStats(room).average;
-  if (incoming <= expectation) return false;
-  const flipScore = sumFaceUp(player) + expectation;
-  return flipScore + 1 < opponentOutlook(room, player.id, expectation);
+  const worst = highestValue(unseenStats(room).counts);
+  return sureWin(room, player.id, sumFaceUp(player) + worst);
+}
+
+function closeScore(player: Player, index: number, incoming: number) {
+  const column = columnSlots(index % COLS);
+  const placed = column.map((slotIndex) => {
+    if (slotIndex === index) return incoming;
+    const slot = player.grid[slotIndex];
+    return slot?.faceUp ? slot.value : null;
+  });
+  const clears =
+    placed.every((value) => value !== null) &&
+    placed.every((value) => value === placed[0]);
+  let score = 0;
+  player.grid.forEach((slot, slotIndex) => {
+    if (clears && column.includes(slotIndex)) return;
+    if (slotIndex === index) {
+      score += incoming;
+      return;
+    }
+    if (slot?.faceUp) score += slot.value;
+  });
+  return score;
+}
+
+function sureWin(room: Room, selfId: string, score: number) {
+  const counts = unseenStats(room).counts;
+  let compared = false;
+  for (const player of room.players) {
+    if (player.id === selfId) continue;
+    compared = true;
+    if (!(score < opponentFloor(player, counts))) return false;
+  }
+  return compared;
+}
+
+function opponentFloor(player: Player, counts: Map<number, number>) {
+  const hidden = hiddenIndexes(player).length;
+  const reserved = drawLowest(counts, hidden);
+  const draw = lowestValue(reserved.rest);
+  const peak = highestFaceUpValue(player);
+  const swing = peak === null ? 0 : Math.max(0, peak - draw);
+  return sumFaceUp(player) + reserved.sum - swing;
+}
+
+function drawLowest(counts: Map<number, number>, amount: number) {
+  const rest = new Map(counts);
+  let left = amount;
+  let sum = 0;
+  for (const value of [...rest.keys()].sort((a, b) => a - b)) {
+    if (left === 0) break;
+    const have = rest.get(value) ?? 0;
+    const take = Math.min(have, left);
+    if (take === 0) continue;
+    sum += value * take;
+    rest.set(value, have - take);
+    left -= take;
+  }
+  return { sum, rest };
+}
+
+function lowestValue(counts: Map<number, number>) {
+  let best: number | null = null;
+  for (const [value, count] of counts) {
+    if (count <= 0) continue;
+    if (best === null || value < best) best = value;
+  }
+  return best ?? 0;
+}
+
+function highestValue(counts: Map<number, number>) {
+  let best: number | null = null;
+  for (const [value, count] of counts) {
+    if (count <= 0) continue;
+    if (best === null || value > best) best = value;
+  }
+  return best ?? 12;
+}
+
+function highestFaceUpValue(player: Player) {
+  let best: number | null = null;
+  for (const slot of player.grid) {
+    if (!slot?.faceUp) continue;
+    if (best === null || slot.value > best) best = slot.value;
+  }
+  return best;
 }
 
 function forcedFallback(
@@ -295,14 +384,11 @@ function forcedFallback(
   if (
     hidden.length > 1 &&
     buryCost < coverCost &&
-    !closingPays(room, player, incoming, expectation, level)
+    !closingPays(room, player, incoming, level)
   ) {
     return pairSlot(player, incoming) ?? hidden[0] ?? null;
   }
-  if (
-    hidden.length === 1 &&
-    closingPays(room, player, incoming, expectation, level)
-  ) {
+  if (hidden.length === 1 && closingPays(room, player, incoming, level)) {
     return hidden[0] ?? null;
   }
   return cover ?? hidden[0] ?? firstOccupied(player);
@@ -462,19 +548,8 @@ function unseenStats(room: Room) {
   return {
     average: total > 0 ? sum / total : 5,
     count: (value: number) => counts.get(value) ?? 0,
+    counts,
   };
-}
-
-function opponentOutlook(room: Room, selfId: string, expectation: number) {
-  let best = Number.POSITIVE_INFINITY;
-  for (const player of room.players) {
-    if (player.id === selfId) continue;
-    best = Math.min(
-      best,
-      sumFaceUp(player) + hiddenIndexes(player).length * expectation
-    );
-  }
-  return best;
 }
 
 function sumFaceUp(player: Player) {

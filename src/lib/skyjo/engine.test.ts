@@ -411,9 +411,10 @@ test("un bot difficile ignore les cartes cachées", () => {
   assert.deepEqual(suggest(state)?.action, { type: "draw" });
 });
 
-test("un bot difficile ferme quand son score bat la table", () => {
+test("un bot difficile couvre une carte visible plutôt que de retourner la dernière", () => {
   const grid = zeros(12);
-  grid[0] = down("last", 7);
+  grid[0] = down("last", 12);
+  grid[1] = up("shown", 3);
   const foe = zeros(12, false);
   foe[0] = up("bad", 12);
   const state = room({
@@ -421,10 +422,53 @@ test("un bot difficile ferme quand son score bat la table", () => {
       player("bot", grid, { isBot: true, botLevel: "hard" }),
       player("foe", foe),
     ],
-    phase: { kind: "hold", card: card("h", 3), fromDeck: true },
+    phase: { kind: "hold", card: card("h", 8), fromDeck: true },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "swap", index: 1 });
+});
+
+test("un bot difficile ferme quand la pire carte adverse le laisse devant", () => {
+  const grid = zeros(12);
+  grid[0] = down("last", 9);
+  for (let index = 1; index <= 5; index += 1) grid[index] = up(`n${index}`, -2);
+  const foe = zeros(12);
+  foe[0] = up("high", 12);
+  for (let index = 1; index < 12; index += 1) foe[index] = up(`f${index}`, 2);
+  const state = room({
+    players: [
+      player("bot", grid, { isBot: true, botLevel: "hard" }),
+      player("foe", foe),
+    ],
+    phase: { kind: "hold", card: card("h", 0), fromDeck: true },
     current: 0,
   });
   assert.deepEqual(suggest(state)?.action, { type: "swap", index: 0 });
+});
+
+test("un bot difficile retourne la dernière seulement si la pire carte le laisse devant", () => {
+  const grid = zeros(12);
+  grid[0] = down("last", 4);
+  for (let index = 1; index <= 8; index += 1) grid[index] = up(`t${index}`, 2);
+  const foe = zeros(12);
+  foe[0] = up("peak", 12);
+  for (let index = 1; index <= 7; index += 1) foe[index] = up(`a${index}`, 4);
+  const discard = [
+    ...Array.from({ length: 10 }, (_, index) => card(`n${index}`, 9)),
+    ...Array.from({ length: 10 }, (_, index) => card(`t${index}`, 10)),
+    ...Array.from({ length: 10 }, (_, index) => card(`e${index}`, 11)),
+    ...Array.from({ length: 9 }, (_, index) => card(`w${index}`, 12)),
+  ];
+  const state = room({
+    players: [
+      player("bot", grid, { isBot: true, botLevel: "hard" }),
+      player("foe", foe),
+    ],
+    phase: { kind: "hold", card: card("held", 12), fromDeck: true },
+    discard,
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "discard-drawn" });
 });
 
 test("un bot difficile ne ferme pas s'il n'est pas devant", () => {
