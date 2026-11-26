@@ -9,7 +9,16 @@ export type Slot = {
   faceUp: boolean;
 } | null;
 
-export type BotLevel = "easy" | "normal" | "hard";
+export type BotLevel = "easy" | "normal" | "hard" | "extreme";
+
+export function isBotLevel(value: unknown): value is BotLevel {
+  return (
+    value === "easy" ||
+    value === "normal" ||
+    value === "hard" ||
+    value === "extreme"
+  );
+}
 
 export type Player = {
   id: string;

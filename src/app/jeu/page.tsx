@@ -1,4 +1,4 @@
-import type { BotLevel } from "@/lib/skyjo/types";
+import { isBotLevel, type BotLevel } from "@/lib/skyjo/types";
 import { LocalGame } from "@/components/skyjo/LocalGame";
 
 export default async function Page({
@@ -17,7 +17,5 @@ export default async function Page({
 }
 
 function readLevel(value: string | undefined): BotLevel {
-  return value === "easy" || value === "normal" || value === "hard"
-    ? value
-    : "normal";
+  return isBotLevel(value) ? value : "normal";
 }

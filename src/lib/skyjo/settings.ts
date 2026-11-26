@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { BotLevel } from "@/lib/skyjo/types";
+import { isBotLevel, type BotLevel } from "@/lib/skyjo/types";
 
 const KEY = "skyjo-settings";
 
@@ -17,9 +17,7 @@ const defaults: SkyjoSettings = {
 };
 
 function readLevel(value: unknown): BotLevel {
-  return value === "easy" || value === "normal" || value === "hard"
-    ? value
-    : "normal";
+  return isBotLevel(value) ? value : "normal";
 }
 
 export function loadSettings(): SkyjoSettings {

@@ -1,5 +1,5 @@
 import { joinRemoteRoom, leaveRoom, play, readRoom } from "@/lib/skyjo/rooms";
-import type { Action, BotLevel } from "@/lib/skyjo/types";
+import { isBotLevel, type Action, type BotLevel } from "@/lib/skyjo/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -84,9 +84,7 @@ export async function POST(
 }
 
 function readLevel(value: unknown): BotLevel {
-  return value === "easy" || value === "normal" || value === "hard"
-    ? value
-    : "normal";
+  return isBotLevel(value) ? value : "normal";
 }
 
 function parseAction(value: Action | undefined): Action | null {

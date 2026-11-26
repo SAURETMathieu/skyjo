@@ -502,6 +502,93 @@ test("un bot difficile évite de retourner une colonne négative", () => {
   assert.deepEqual(suggest(state, () => 0)?.action, { type: "flip", index: 1 });
 });
 
+test("un bot extrême ne recouvre pas un 0 caché avec un 5", () => {
+  const grid = zeros(12);
+  grid[0] = down("good", 0);
+  grid[1] = down("bad", 12);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "extreme" })],
+    phase: { kind: "hold", card: card("h", 5), fromDeck: false },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "swap", index: 1 });
+});
+
+test("un bot difficile recouvre au hasard quand il doit poser un 5", () => {
+  const grid = zeros(12);
+  grid[0] = down("good", 0);
+  grid[1] = down("bad", 12);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "hard" })],
+    phase: { kind: "hold", card: card("h", 5), fromDeck: false },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "swap", index: 0 });
+});
+
+test("un bot extrême défausse un 5 pour retourner son 0", () => {
+  const grid = zeros(12);
+  grid[0] = down("good", 0);
+  grid[2] = down("other", 1);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "extreme" })],
+    phase: { kind: "hold", card: card("h", 5), fromDeck: true },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "discard-drawn" });
+});
+
+test("un bot extrême retourne sa plus petite carte cachée", () => {
+  const grid = zeros(12).map((slot, index) => up(`u${index}`, 2));
+  grid[2] = down("good", 0);
+  grid[3] = down("other", 6);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "extreme" })],
+    phase: { kind: "flip" },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state, () => 0)?.action, { type: "flip", index: 2 });
+});
+
+test("un bot extrême finit une colonne cachée au lieu de couvrir un 12", () => {
+  const grid = zeros(12);
+  grid[0] = down("a", 8);
+  grid[4] = down("b", 8);
+  grid[8] = up("odd", 3);
+  grid[1] = up("high", 12);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "extreme" })],
+    phase: { kind: "hold", card: card("h", 8), fromDeck: true },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "swap", index: 8 });
+});
+
+test("un bot extrême retourne la carte qui termine sa colonne", () => {
+  const grid = zeros(12);
+  grid[0] = up("seen", 9);
+  grid[4] = down("hid", 9);
+  grid[8] = down("hid2", 9);
+  grid[1] = down("low", 0);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "extreme" })],
+    phase: { kind: "flip" },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state, () => 0)?.action, { type: "flip", index: 4 });
+});
+
+test("un bot extrême montre d'abord sa plus grosse carte", () => {
+  const grid = zeros(12, false);
+  grid[2] = down("high", 12);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "extreme" })],
+    phase: { kind: "opening" },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "flip", index: 2 });
+});
+
 test("un bot normal retourne ses deux cartes dans des colonnes différentes", () => {
   const grid = zeros(12, false);
   grid[0] = up("open", 3);

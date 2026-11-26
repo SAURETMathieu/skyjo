@@ -1,6 +1,12 @@
 import { COLS, columnSlots, DISTRIBUTION } from "@/lib/skyjo/cards";
 import { applyAction, canDraw, faceUpCount } from "@/lib/skyjo/engine";
-import type { Action, BotLevel, Player, Room } from "@/lib/skyjo/types";
+import {
+  isBotLevel,
+  type Action,
+  type BotLevel,
+  type Player,
+  type Room,
+} from "@/lib/skyjo/types";
 
 export const BOT_BEAT_MS = 1000;
 
@@ -23,8 +29,13 @@ export function suggest(
       (player) => player.isBot && faceUpCount(player) < 2
     );
     if (!bot) return null;
+    const level = levelOf(bot);
     const index =
-      levelOf(bot) === "easy" ? firstHidden(bot) : spreadHidden(bot);
+      level === "easy"
+        ? firstHidden(bot)
+        : level === "extreme"
+          ? worstHidden(bot)
+          : spreadHidden(bot);
     if (index === null) return null;
     return { playerId: bot.id, action: { type: "flip", index } };
   }
@@ -87,9 +98,11 @@ export function suggest(
 }
 
 function levelOf(player: Player): BotLevel {
-  return player.botLevel === "easy" || player.botLevel === "hard"
-    ? player.botLevel
-    : "normal";
+  return isBotLevel(player.botLevel) ? player.botLevel : "normal";
+}
+
+function informed(level: Strength) {
+  return level === "hard" || level === "extreme";
 }
 
 function wantsDiscard(room: Room, player: Player, level: Strength) {
@@ -166,16 +179,27 @@ function bestOffer(
     }
   }
   const hidden = hiddenIndexes(player);
+  if (level === "extreme") {
+    const setup = columnSetup(player, incoming);
+    if (setup) offers.push(setup);
+    const dump = knownDump(player, incoming);
+    if (dump !== null) {
+      const buried = player.grid[dump]?.value ?? incoming;
+      offers.push({ index: dump, saved: buried - incoming });
+    }
+  }
   if (hidden.length === 1 && closingPays(room, player, incoming, level)) {
     const last = hidden[0] ?? 0;
     const score = closeScore(player, last, incoming);
     offers.push({
       index: last,
-      saved:
-        level === "hard" ? 1000 - score : Math.max(8, stats.average - incoming),
+      saved: informed(level)
+        ? 1000 - score
+        : Math.max(8, stats.average - incoming),
     });
   } else if (
     hidden.length > 1 &&
+    level !== "extreme" &&
     (level === "normal" ? incoming <= 0 : incoming <= stats.average - 4)
   ) {
     offers.push({
@@ -189,7 +213,7 @@ function bestOffer(
   }
   const last = hidden.length === 1 ? hidden[0] : undefined;
   const kept =
-    level === "hard" && last !== undefined
+    informed(level) && last !== undefined
       ? offers.flatMap((offer) => {
           if (offer.index !== last) return [offer];
           const score = closeScore(player, last, incoming);
@@ -230,6 +254,9 @@ function bestReplacement(
     if (
       !slot?.faceUp ||
       guarded(player, index, incoming, level) ||
+      (level === "extreme" &&
+        keepsColumn(player, index) &&
+        slot.value - incoming < slot.value * 2) ||
       !enoughGain(level, mode, slot.value, incoming, expectation)
     ) {
       continue;
@@ -260,7 +287,7 @@ function guarded(
   if (same.length !== 2 || hidden.length !== 1) return false;
   if (slot.value <= 1) return true;
   if (level === "normal" && slot.value <= 4) return true;
-  return level === "hard" && slot.value >= 6 && slot.value - incoming < 6;
+  return informed(level) && slot.value >= 6 && slot.value - incoming < 6;
 }
 
 function closingPays(
@@ -277,8 +304,14 @@ function closingPays(
 }
 
 function worstFlipStillWins(room: Room, player: Player, level: Strength) {
-  if (level !== "hard" || hiddenIndexes(player).length !== 1) return false;
-  const worst = highestValue(unseenStats(room).counts);
+  const hidden = hiddenIndexes(player);
+  if (hidden.length !== 1 || !informed(level)) return false;
+  const last = hidden[0];
+  if (last === undefined) return false;
+  const worst =
+    level === "extreme"
+      ? (player.grid[last]?.value ?? 0)
+      : highestValue(unseenStats(room).counts);
   return sureWin(room, player.id, sumFaceUp(player) + worst);
 }
 
@@ -381,6 +414,23 @@ function forcedFallback(
       ? Number.POSITIVE_INFINITY
       : incoming - faceValue(player, cover);
   const buryCost = incoming - expectation;
+  if (level === "extreme") {
+    const setup = columnSetup(player, incoming);
+    if (setup) return setup.index;
+    const dump = knownDump(player, incoming);
+    if (hidden.length === 1 && closingPays(room, player, incoming, level)) {
+      return hidden[0] ?? null;
+    }
+    if (dump !== null) {
+      const dumpGain = (player.grid[dump]?.value ?? incoming) - incoming;
+      const coverGain =
+        cover === null
+          ? Number.NEGATIVE_INFINITY
+          : faceValue(player, cover) - incoming;
+      if (dumpGain > coverGain) return dump;
+    }
+    return cover ?? firstOccupied(player);
+  }
   if (
     hidden.length > 1 &&
     buryCost < coverCost &&
@@ -406,7 +456,13 @@ function coverIndex(player: Player, incoming: number, level: Strength) {
       anyIndex = index;
       anyValue = slot.value;
     }
-    if (guarded(player, index, incoming, level) || slot.value <= openValue) {
+    if (
+      guarded(player, index, incoming, level) ||
+      (level === "extreme" &&
+        keepsColumn(player, index) &&
+        slot.value !== incoming) ||
+      slot.value <= openValue
+    ) {
       continue;
     }
     openIndex = index;
@@ -440,7 +496,11 @@ function pairSlot(player: Player, incoming: number) {
 }
 
 function chooseFlip(player: Player, level: Strength, rng: () => number) {
-  const minimum = level === "hard" ? 4 : 3;
+  if (level === "extreme") {
+    const known = revealColumn(player);
+    if (known !== null) return known;
+  }
+  const minimum = informed(level) ? 4 : 3;
   for (let column = 0; column < COLS; column += 1) {
     const slots = columnSlots(column).map((index) => ({
       index,
@@ -450,6 +510,7 @@ function chooseFlip(player: Player, level: Strength, rng: () => number) {
     const hidden = slots.filter((entry) => entry.slot && !entry.slot.faceUp);
     const value = visible[0]?.slot?.value ?? 0;
     if (
+      level !== "extreme" &&
       visible.length === 2 &&
       hidden.length === 1 &&
       visible.every((entry) => entry.slot?.value === value) &&
@@ -483,6 +544,20 @@ function chooseFlip(player: Player, level: Strength, rng: () => number) {
   }
   let pool = hidden.filter((index) => !avoid.has(index));
   if (pool.length === 0) pool = hidden;
+  if (level === "extreme") {
+    const banned = negativeColumn(player);
+    const quiet = pool.filter(
+      (index) => !banned.has(index) && !keepsColumn(player, index)
+    );
+    const options =
+      quiet.length > 0 ? quiet : pool.filter((index) => !banned.has(index));
+    const choices = options.length > 0 ? options : pool;
+    return choices.reduce((best, index) => {
+      const value = player.grid[index]?.value ?? 0;
+      const bestValue = player.grid[best]?.value ?? 0;
+      return value < bestValue ? index : best;
+    });
+  }
   if (level === "hard") {
     const high = pool.filter(
       (index) => (columnPeak(player, index) ?? -100) >= 8
@@ -514,6 +589,109 @@ function columnPeak(player: Player, index: number) {
     if (peak === null || slot.value > peak) peak = slot.value;
   }
   return peak;
+}
+
+function worstHidden(player: Player) {
+  const used = new Set<number>();
+  player.grid.forEach((slot, index) => {
+    if (slot?.faceUp) used.add(index % COLS);
+  });
+  const hidden = hiddenIndexes(player);
+  const fresh = hidden.filter((index) => !used.has(index % COLS));
+  const pool = fresh.length > 0 ? fresh : hidden;
+  return pool.reduce<number | null>((best, index) => {
+    if (best === null) return index;
+    const value = player.grid[index]?.value ?? 0;
+    const bestValue = player.grid[best]?.value ?? 0;
+    return value > bestValue ? index : best;
+  }, null);
+}
+
+function knownDump(player: Player, incoming: number) {
+  let bestIndex: number | null = null;
+  let bestValue = incoming;
+  for (const index of hiddenIndexes(player)) {
+    const slot = player.grid[index];
+    if (!slot || slot.value <= bestValue || keepsColumn(player, index))
+      continue;
+    bestIndex = index;
+    bestValue = slot.value;
+  }
+  return bestIndex;
+}
+
+function keepsColumn(player: Player, index: number) {
+  const slot = player.grid[index];
+  if (!slot || slot.value <= 0) return false;
+  const same = columnSlots(index % COLS).filter((slotIndex) => {
+    const other = player.grid[slotIndex];
+    return other?.value === slot.value;
+  });
+  return same.length >= 2;
+}
+
+function columnSetup(player: Player, incoming: number) {
+  if (incoming <= 0) return null;
+  let best: { index: number; saved: number } | null = null;
+  for (let column = 0; column < COLS; column += 1) {
+    const indexes = columnSlots(column);
+    const matches = indexes.filter(
+      (index) => player.grid[index]?.value === incoming
+    );
+    if (matches.length < 2) continue;
+    const odd = indexes.find((index) => {
+      const slot = player.grid[index];
+      return slot && slot.value !== incoming;
+    });
+    if (odd === undefined) continue;
+    const oddSlot = player.grid[odd];
+    const saved =
+      incoming * 2 +
+      (oddSlot?.faceUp ? Math.max(0, oddSlot.value - incoming) : 0);
+    if (!best || saved > best.saved) best = { index: odd, saved };
+  }
+  return best;
+}
+
+function revealColumn(player: Player) {
+  let bestIndex: number | null = null;
+  let bestRank = -1;
+  for (let column = 0; column < COLS; column += 1) {
+    const indexes = columnSlots(column);
+    const slots = indexes.map((index) => player.grid[index]);
+    if (slots.some((slot) => !slot)) continue;
+    const value = slots[0]?.value ?? 0;
+    if (value <= 0 || !slots.every((slot) => slot?.value === value)) continue;
+    const hidden = indexes.filter((index) => {
+      const slot = player.grid[index];
+      return slot && !slot.faceUp;
+    });
+    if (hidden.length === 0) continue;
+    const revealed = indexes.length - hidden.length;
+    if (revealed === 0 && value < 6) continue;
+    const rank = revealed * 100 + value;
+    if (rank > bestRank) {
+      bestRank = rank;
+      bestIndex = hidden[0] ?? null;
+    }
+  }
+  return bestIndex;
+}
+
+function negativeColumn(player: Player) {
+  const banned = new Set<number>();
+  for (let column = 0; column < COLS; column += 1) {
+    const indexes = columnSlots(column);
+    const slots = indexes.map((index) => player.grid[index]);
+    if (slots.some((slot) => !slot)) continue;
+    const value = slots[0]?.value ?? 0;
+    if (value > 0 || !slots.every((slot) => slot?.value === value)) continue;
+    for (const index of indexes) {
+      const slot = player.grid[index];
+      if (slot && !slot.faceUp) banned.add(index);
+    }
+  }
+  return banned;
 }
 
 function spreadHidden(player: Player) {
