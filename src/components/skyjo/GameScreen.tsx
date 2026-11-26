@@ -292,24 +292,74 @@ function Lobby({
   settings: SkyjoSettings;
   onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [notice, setNotice] = useState<"code" | "link" | "error" | null>(null);
+  const noticeTimer = useRef(0);
   const link =
     typeof window === "undefined"
       ? view.code
       : `${window.location.origin}/partie/${view.code}`;
 
-  async function share() {
-    const payload = {
-      title: "Skyjo",
-      text: `Rejoins ma partie Skyjo : ${view.code}`,
-      url: link,
-    };
-    if (navigator.share) {
-      await navigator.share(payload).catch(() => undefined);
-      return;
+  function flash(next: "code" | "link" | "error") {
+    setNotice(next);
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 2000);
+  }
+
+  function copyWithCommand(text: string) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "0";
+    area.style.left = "0";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
     }
-    await navigator.clipboard.writeText(link);
-    setCopied(true);
+    area.remove();
+    return ok;
+  }
+
+  async function copyText(text: string) {
+    // Pendant le clic : le presse-papiers moderne est souvent bloqué
+    // (page en http sur le téléphone, ou permission refusée).
+    if (copyWithCommand(text)) return true;
+    if (!navigator.clipboard?.writeText) return false;
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function share() {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "Skyjo",
+          text: `Rejoins ma partie Skyjo : ${view.code}`,
+          url: link,
+        });
+        return;
+      } catch (caught) {
+        if (caught instanceof DOMException && caught.name === "AbortError") {
+          return;
+        }
+      }
+    }
+    flash((await copyText(link)) ? "link" : "error");
+  }
+
+  async function copyCode() {
+    flash((await copyText(view.code)) ? "code" : "error");
   }
 
   return (
@@ -325,20 +375,22 @@ function Lobby({
           onClick={() => void share()}
         >
           <Share2 className="size-4" />
-          Partager
+          {notice === "link" ? "Lien copié" : "Partager"}
         </button>
         <button
           type="button"
           className={secondaryButton}
-          onClick={() => {
-            void navigator.clipboard.writeText(view.code);
-            setCopied(true);
-          }}
+          onClick={() => void copyCode()}
         >
           <Copy className="size-4" />
-          {copied ? "Copié" : "Copier"}
+          {notice === "code" ? "Copié" : "Copier"}
         </button>
       </div>
+      {notice === "error" ? (
+        <p className="mt-2 text-center text-sm text-rose-200">
+          Copie impossible
+        </p>
+      ) : null}
       <ul className="mt-6 flex flex-col gap-2">
         {view.players.map((player) => (
           <li
