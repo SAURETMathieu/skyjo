@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import NextImage from "next/image";
 import Link from "next/link";
 import {
@@ -73,11 +73,25 @@ function AppImage({
   );
 }
 
+function SearchParamsSource({
+  onChange,
+}: {
+  onChange: (params: ReturnType<typeof useSearchParams>) => void;
+}) {
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    onChange(searchParams);
+  }, [onChange, searchParams]);
+
+  return null;
+}
+
 function NavigationBridge({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const params = useParams();
+  const [searchParams, setSearchParams] = useState(() => new URLSearchParams());
 
   const value = useMemo<Partial<NavigationAdapter>>(
     () => ({
@@ -111,7 +125,14 @@ function NavigationBridge({ children }: { children: ReactNode }) {
     [params, pathname, router, searchParams]
   );
 
-  return <NavigationProvider value={value}>{children}</NavigationProvider>;
+  return (
+    <NavigationProvider value={value}>
+      <Suspense fallback={null}>
+        <SearchParamsSource onChange={setSearchParams} />
+      </Suspense>
+      {children}
+    </NavigationProvider>
+  );
 }
 
 function TranslationBridge({ children }: { children: ReactNode }) {
