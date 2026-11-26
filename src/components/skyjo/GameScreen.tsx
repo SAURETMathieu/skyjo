@@ -437,6 +437,7 @@ function Board({
   const flightSeq = useRef(0);
   const [rows, setRows] = useState(1);
   const [flights, setFlights] = useState<Flight[]>([]);
+  const [covered, setCovered] = useState<CoveredCell | null>(null);
   const [settled, setSettled] = useState<number | null>(null);
   const [hideHold, setHideHold] = useState(false);
   const closer = view.players.find((player) => player.id === view.closerId);
@@ -508,6 +509,7 @@ function Board({
     if (!reduce && source && value !== null) {
       const id = flightSeq.current + 1;
       flightSeq.current = id;
+      const previous = you?.grid[index];
       setFlights((list) => [
         ...list,
         {
@@ -517,13 +519,24 @@ function Board({
           to: target.getBoundingClientRect(),
         },
       ]);
+      if (previous) {
+        setCovered({
+          index,
+          faceUp: previous.faceUp,
+          value: previous.value,
+          empty: previous.empty,
+        });
+      }
       setHideHold(true);
       setSettled(index);
+      window.setTimeout(() => {
+        setCovered((current) => (current?.index === index ? null : current));
+      }, 430);
       window.setTimeout(() => {
         setFlights((list) => list.filter((item) => item.id !== id));
         setHideHold(false);
         setSettled((current) => (current === index ? null : current));
-      }, 460);
+      }, 480);
     }
     onAction({ type: "swap", index });
   }
@@ -699,7 +712,9 @@ function Board({
             </div>
             <div className="grid grid-cols-4 gap-x-3 gap-y-2.5">
               {you.grid.map((cell, index) => {
-                const canSwap = view.actions.swap && !cell.empty;
+                const shown = covered?.index === index ? covered : cell;
+                const canSwap =
+                  view.actions.swap && !cell.empty && covered === null;
                 const canFlip =
                   view.actions.flip && !cell.empty && !cell.faceUp;
                 const column = (index % 4) + 1;
@@ -707,9 +722,9 @@ function Board({
                 return (
                   <CardFace
                     key={`${you.id}-${index}`}
-                    value={cell.value}
-                    faceUp={cell.faceUp}
-                    empty={cell.empty}
+                    value={shown.value}
+                    faceUp={shown.faceUp}
+                    empty={shown.empty}
                     indices
                     framed
                     settle={settled === index}
@@ -723,10 +738,10 @@ function Board({
                         : undefined
                     }
                     label={
-                      cell.empty
+                      shown.empty
                         ? `Colonne ${column}, ligne ${row}, vide`
-                        : cell.faceUp
-                          ? `Colonne ${column}, ligne ${row}, ${cell.value}`
+                        : shown.faceUp
+                          ? `Colonne ${column}, ligne ${row}, ${shown.value}`
                           : `Colonne ${column}, ligne ${row}, cachée`
                     }
                   />
@@ -742,6 +757,13 @@ function Board({
     </Shell>
   );
 }
+
+type CoveredCell = {
+  index: number;
+  faceUp: boolean;
+  value: number | null;
+  empty: boolean;
+};
 
 type Flight = {
   id: number;
