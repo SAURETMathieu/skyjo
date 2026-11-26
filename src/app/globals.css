@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@source "../**/*.{ts,tsx}";
+@source "../../../packages/ui/src/**/*.{ts,tsx}";
+@source "../../../packages/ui/dist/**/*.{js,mjs}";
+@source "../../../packages/icons/src/**/*.{ts,tsx}";
+@source "../../../packages/icons/dist/**/*.{js,mjs}";
+@source "../../../packages/csv-import/src/**/*.{ts,tsx}";
+@source "../../../packages/csv-import/dist/**/*.{js,mjs}";
+@source "../../../packages/devtools/src/**/*.{ts,tsx}";
+@source "../../../packages/devtools/dist/**/*.{js,mjs}";
+@source "../../../packages/fields/src/**/*.{ts,tsx}";
+@source "../../../packages/fields/dist/**/*.{js,mjs}";
+@source "../../../packages/rhf-fields/src/**/*.{ts,tsx}";
+@source "../../../packages/rhf-fields/dist/**/*.{js,mjs}";
+@source "../../../packages/tables/src/**/*.{ts,tsx}";
+@source "../../../packages/tables/dist/**/*.{js,mjs}";
+@source "../../../packages/advanced-tables/src/**/*.{ts,tsx}";
+@source "../../../packages/advanced-tables/dist/**/*.{js,mjs}";
+@source "../../../packages/rbac-admin/src/**/*.{ts,tsx}";
+@source "../../../packages/rbac-admin/dist/**/*.{js,mjs}";
+
+:root {
+  --background: oklch(0.985 0.002 247);
+  --foreground: oklch(0.21 0.02 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 265);
+  --primary: oklch(0.45 0.14 255);
+  --primary-foreground: oklch(0.985 0.002 247);
+  --secondary: oklch(0.95 0.01 255);
+  --secondary-foreground: oklch(0.28 0.03 265);
+  --muted: oklch(0.95 0.008 255);
+  --muted-foreground: oklch(0.5 0.02 265);
+  --accent: oklch(0.94 0.02 255);
+  --accent-foreground: oklch(0.28 0.03 265);
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.985 0.002 247);
+  --border: oklch(0.9 0.01 255);
+  --input: oklch(0.9 0.01 255);
+  --ring: oklch(0.55 0.12 255);
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: oklch(0.18 0.02 265);
+  --foreground: oklch(0.97 0.005 247);
+  --card: oklch(0.22 0.02 265);
+  --card-foreground: oklch(0.97 0.005 247);
+  --popover: oklch(0.22 0.02 265);
+  --popover-foreground: oklch(0.97 0.005 247);
+  --primary: oklch(0.7 0.12 255);
+  --primary-foreground: oklch(0.18 0.02 265);
+  --secondary: oklch(0.28 0.02 265);
+  --secondary-foreground: oklch(0.97 0.005 247);
+  --muted: oklch(0.28 0.02 265);
+  --muted-foreground: oklch(0.75 0.02 255);
+  --accent: oklch(0.3 0.03 265);
+  --accent-foreground: oklch(0.97 0.005 247);
+  --destructive: oklch(0.65 0.18 25);
+  --destructive-foreground: oklch(0.97 0.005 247);
+  --border: oklch(0.32 0.02 265);
+  --input: oklch(0.32 0.02 265);
+  --ring: oklch(0.7 0.1 255);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-[#041910] text-white antialiased;
+  }
+}
+
+.skyjo-table {
+  background:
+    radial-gradient(120% 80% at 50% 115%, #147046 0%, transparent 58%),
+    radial-gradient(90% 42% at 50% -8%, #0c4a32 0%, transparent 62%),
+    linear-gradient(180deg, #083224 0%, #06281c 42%, #041910 100%);
+}
+
+@keyframes skyjo-arrow {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+
+.skyjo-arrow {
+  animation: skyjo-arrow 0.85s ease-in-out infinite;
+}
+
+.skyjo-opponents {
+  scrollbar-color: rgba(252, 211, 77, 0.85) rgba(255, 255, 255, 0.1);
+  scrollbar-width: thin;
+}
+
+.skyjo-opponents::-webkit-scrollbar {
+  height: 6px;
+}
+
+.skyjo-opponents::-webkit-scrollbar-track {
+  margin-inline: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+}
+
+.skyjo-opponents::-webkit-scrollbar-thumb {
+  background: rgba(252, 211, 77, 0.85);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skyjo-arrow {
+    animation: none;
+  }
+}
