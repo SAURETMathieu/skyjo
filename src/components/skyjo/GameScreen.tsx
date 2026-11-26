@@ -9,6 +9,8 @@ import {
   useState,
   type ReactElement,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  type Ref,
 } from "react";
 import {
   ArrowRight,
@@ -486,12 +488,15 @@ function Board({
   const taken = holding && !view.holdFromDeck;
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const discardRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DiscardDrag | null>(null);
   const flightSeq = useRef(0);
   const [rows, setRows] = useState(1);
   const [flights, setFlights] = useState<Flight[]>([]);
   const [covered, setCovered] = useState<CoveredCell | null>(null);
   const [settled, setSettled] = useState<number | null>(null);
   const [hideHold, setHideHold] = useState(false);
+  const [discardDrag, setDiscardDrag] = useState<DiscardDrag | null>(null);
   const closer = view.players.find((player) => player.id === view.closerId);
   const finale = useTurnCallout(view.lastRound);
   const turn = useTurnCallout(
@@ -593,6 +598,78 @@ function Board({
     onAction({ type: "swap", index });
   }
 
+  function overDiscard(x: number, y: number) {
+    const box = discardRef.current?.getBoundingClientRect();
+    if (!box) return false;
+    const pad = 20;
+    return (
+      x >= box.left - pad &&
+      x <= box.right + pad &&
+      y >= box.top - pad &&
+      y <= box.bottom + pad
+    );
+  }
+
+  function updateDiscardDrag(
+    event: ReactPointerEvent<HTMLDivElement>,
+    origin: DiscardDrag
+  ) {
+    const moved =
+      Math.hypot(event.clientX - origin.startX, event.clientY - origin.startY) >
+      8;
+    const next = {
+      ...origin,
+      x: event.clientX - origin.dx,
+      y: event.clientY - origin.dy,
+      moved,
+      over: moved && overDiscard(event.clientX, event.clientY),
+    };
+    dragRef.current = next;
+    setDiscardDrag(next);
+  }
+
+  function startDiscardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!view.actions.discardDrawn || busy || event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const next = {
+      pointerId: event.pointerId,
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+      dx: event.clientX - rect.left,
+      dy: event.clientY - rect.top,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      over: false,
+    };
+    dragRef.current = next;
+    setDiscardDrag(next);
+  }
+
+  function moveDiscardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const origin = dragRef.current;
+    if (!origin || origin.pointerId !== event.pointerId) return;
+    updateDiscardDrag(event, origin);
+  }
+
+  function endDiscardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const origin = dragRef.current;
+    if (!origin || origin.pointerId !== event.pointerId) return;
+    const moved =
+      origin.moved ||
+      Math.hypot(event.clientX - origin.startX, event.clientY - origin.startY) >
+        8;
+    const over = moved && overDiscard(event.clientX, event.clientY);
+    dragRef.current = null;
+    setDiscardDrag(null);
+    if (over && view.actions.discardDrawn && !busy) {
+      onAction({ type: "discard-drawn" });
+    }
+  }
+
   return (
     <Shell
       onQuit={onQuit}
@@ -656,6 +733,17 @@ function Board({
               }
               secret={drawn && revealedHold === null}
               hideLift={hideHold}
+              heldHidden={discardDrag?.moved === true}
+              heldDrag={
+                view.actions.discardDrawn && !busy
+                  ? {
+                      onPointerDown: startDiscardDrag,
+                      onPointerMove: moveDiscardDrag,
+                      onPointerUp: endDiscardDrag,
+                      onPointerCancel: endDiscardDrag,
+                    }
+                  : undefined
+              }
               enabled={view.actions.draw && !busy}
               onClick={() => onAction({ type: "draw" })}
               label={
@@ -694,6 +782,8 @@ function Board({
               </p>
             </div>
             <Pile
+              pileRef={discardRef}
+              hot={discardDrag?.over === true}
               title="Défausse"
               lifted={
                 taken ? (
@@ -802,6 +892,23 @@ function Board({
             </div>
           </section>
         ) : null}
+        {discardDrag?.moved && view.hand !== null ? (
+          <div
+            className="pointer-events-none fixed z-30"
+            style={{
+              left: discardDrag.x,
+              top: discardDrag.y,
+              width: discardDrag.width,
+              height: discardDrag.height,
+            }}
+          >
+            <CardFace
+              faceUp
+              value={view.hand}
+              label={`Carte piochée ${view.hand}`}
+            />
+          </div>
+        ) : null}
         {flights.map((flight) => (
           <FlyingCard key={flight.id} flight={flight} />
         ))}
@@ -815,6 +922,20 @@ type CoveredCell = {
   faceUp: boolean;
   value: number | null;
   empty: boolean;
+};
+
+type DiscardDrag = {
+  pointerId: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  dx: number;
+  dy: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  over: boolean;
 };
 
 type Flight = {
@@ -909,46 +1030,71 @@ function Opponent({
 }
 
 function Pile({
+  pileRef,
   title,
   detail,
   lifted,
   secret = false,
   hideLift = false,
+  heldHidden = false,
+  heldDrag,
+  hot = false,
   enabled,
   onClick,
   label,
   children,
 }: {
+  pileRef?: Ref<HTMLDivElement>;
   title: string;
   detail?: string;
   lifted: ReactNode;
   secret?: boolean;
   hideLift?: boolean;
+  heldHidden?: boolean;
+  heldDrag?: {
+    onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+    onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
+    onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+    onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  };
+  hot?: boolean;
   enabled: boolean;
   onClick: () => void;
   label: string;
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-12 flex-col items-center">
+    <div ref={pileRef} className="flex w-12 flex-col items-center">
       <div className="relative w-full">
         <button
           type="button"
           disabled={!enabled}
           onClick={onClick}
           aria-label={label}
-          className="relative z-10 block w-full"
+          className={`relative z-10 block w-full ${hot ? "scale-105" : ""}`}
         >
           {isValidElement(children)
             ? cloneElement(children as ReactElement<{ highlight?: boolean }>, {
-                highlight: enabled,
+                highlight: enabled || hot,
               })
             : children}
         </button>
         {lifted && !hideLift ? (
           <div
             data-skyjo-held
-            className={`pointer-events-none absolute inset-0 z-20 ${
+            role={heldDrag ? "button" : undefined}
+            aria-label={
+              heldDrag ? "Glisser la carte piochée vers la défausse" : undefined
+            }
+            onPointerDown={heldDrag?.onPointerDown}
+            onPointerMove={heldDrag?.onPointerMove}
+            onPointerUp={heldDrag?.onPointerUp}
+            onPointerCancel={heldDrag?.onPointerCancel}
+            className={`absolute inset-0 z-20 touch-none ${
+              heldDrag
+                ? "cursor-grab active:cursor-grabbing"
+                : "pointer-events-none"
+            } ${heldHidden ? "opacity-0" : ""} ${
               secret
                 ? "translate-y-[-70%] -rotate-6"
                 : "-translate-x-0.5 -translate-y-2"
