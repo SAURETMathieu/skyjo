@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
@@ -17,6 +18,7 @@ const FRESH_MS = 5000;
 const SEEN_WRITE_MS = 1000;
 const REJOIN_MS = 2 * 60 * 1000;
 const BUCKET = "skyjo-rooms";
+const TABLE = "skyjo_rooms";
 
 type Entry = {
   room: Room;
@@ -25,6 +27,7 @@ type Entry = {
   seen: Record<string, number>;
   left: string[];
   leftAt: Record<string, number>;
+  version: number;
 };
 
 const store = globalThis as typeof globalThis & {
@@ -51,6 +54,7 @@ export function createRemoteRoom(playerId: string, name: string) {
           seen: { [playerId]: Date.now() },
           left: [],
           leftAt: {},
+          version: 0,
         },
         true
       );
@@ -66,55 +70,79 @@ export function createRemoteRoom(playerId: string, name: string) {
 
 export function readRoom(code: string, playerId: string, restore = false) {
   return withLock(code, async () => {
-    const entry = await load(code);
-    if (!entry) return null;
-    const expired = expireDeparted(entry);
-    const stepped = advance(entry);
-    const noted = notePresence(entry, playerId, restore);
-    if (expired || stepped || noted) await save(code, entry);
-    return snapshot(entry, playerId);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await load(code);
+      if (!entry) return null;
+      const before = entry.room.revision;
+      const expired = expireDeparted(entry);
+      const stepped = advance(entry);
+      const noted = notePresence(entry, playerId, restore);
+      if (!(expired || stepped || noted)) return snapshot(entry, playerId);
+      const saved = await commit(code, entry, entry.room.revision !== before);
+      if (!saved) continue;
+      return snapshot(entry, playerId);
+    }
+    const latest = await load(code);
+    return latest ? snapshot(latest, playerId) : null;
   });
 }
 
 export function joinRemoteRoom(code: string, playerId: string, name: string) {
   return withLock(code, async () => {
-    const entry = await load(code);
-    if (!entry) return { error: "Aucune partie avec ce code." as const };
-    const expired = expireDeparted(entry);
-    const step = joinRoom(entry.room, playerId, name);
-    if (!step.ok) {
-      if (expired) await save(code, entry);
-      return { error: step.error ?? "Impossible de rejoindre." };
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await load(code);
+      if (!entry) return { error: "Aucune partie avec ce code." as const };
+      const before = entry.room.revision;
+      const expired = expireDeparted(entry);
+      const step = joinRoom(entry.room, playerId, name);
+      if (!step.ok) {
+        if (expired) {
+          const saved = await commit(code, entry, true);
+          if (!saved) continue;
+        }
+        return { error: step.error ?? "Impossible de rejoindre." };
+      }
+      entry.room = step.state;
+      notePresence(entry, playerId, true);
+      const saved = await commit(code, entry, entry.room.revision !== before);
+      if (!saved) continue;
+      return { snapshot: snapshot(entry, playerId) };
     }
-    entry.room = step.state;
-    notePresence(entry, playerId, true);
-    await save(code, entry);
-    return { snapshot: snapshot(entry, playerId) };
+    return { error: "La partie a avancé." as const };
   });
 }
 
 export function leaveRoom(code: string, playerId: string) {
   return withLock(code, async () => {
-    const entry = await load(code);
-    if (!entry) return null;
-    const expired = expireDeparted(entry);
-    const player = entry.room.players.find(
-      (seat) => seat.id === playerId && !seat.isBot
-    );
-    if (!player) {
-      if (expired) await save(code, entry);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await load(code);
+      if (!entry) return null;
+      const before = entry.room.revision;
+      const expired = expireDeparted(entry);
+      const player = entry.room.players.find(
+        (seat) => seat.id === playerId && !seat.isBot
+      );
+      if (!player) {
+        if (expired) {
+          const saved = await commit(code, entry, true);
+          if (!saved) continue;
+        }
+        return snapshot(entry, playerId);
+      }
+      if (!entry.left.includes(playerId)) {
+        entry.left.push(playerId);
+        entry.leftAt[playerId] = Date.now();
+        entry.room.lastEvent = `${player.name} a quitté la partie`;
+        entry.room.feed = [...entry.room.feed, entry.room.lastEvent].slice(-8);
+        entry.room.revision += 1;
+      }
+      entry.seen[playerId] = Date.now();
+      const saved = await commit(code, entry, entry.room.revision !== before);
+      if (!saved) continue;
       return snapshot(entry, playerId);
     }
-    if (!entry.left.includes(playerId)) {
-      entry.left.push(playerId);
-      entry.leftAt[playerId] = Date.now();
-      entry.room.lastEvent = `${player.name} a quitté la partie`;
-      entry.room.feed = [...entry.room.feed, entry.room.lastEvent].slice(-8);
-      entry.room.revision += 1;
-    }
-    entry.seen[playerId] = Date.now();
-    await save(code, entry);
-    return snapshot(entry, playerId);
+    const latest = await load(code);
+    return latest ? snapshot(latest, playerId) : null;
   });
 }
 
@@ -125,40 +153,55 @@ export function play(
   revision: number
 ) {
   return withLock(code, async () => {
-    const entry = await load(code);
-    if (!entry) return { error: "Cette partie n'existe plus." as const };
-    const expired = expireDeparted(entry);
-    if (
-      action.type === "start" &&
-      entry.room.phase.kind === "lobby" &&
-      playerId === entry.room.hostId &&
-      seatedPlayers(entry, playerId).length < MIN_PLAYERS
-    ) {
-      return { error: "Il faut au moins 2 joueurs." as const };
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await load(code);
+      if (!entry) return { error: "Cette partie n'existe plus." as const };
+      const expired = expireDeparted(entry);
+      if (
+        action.type === "start" &&
+        entry.room.phase.kind === "lobby" &&
+        playerId === entry.room.hostId &&
+        seatedPlayers(entry, playerId).length < MIN_PLAYERS
+      ) {
+        return { error: "Il faut au moins 2 joueurs." as const };
+      }
+      const openingFlip =
+        action.type === "flip" && entry.room.phase.kind === "opening";
+      if (!openingFlip && entry.room.revision !== revision) {
+        if (expired) {
+          const saved = await commit(code, entry, true);
+          if (!saved) continue;
+        }
+        return {
+          error: "La partie a avancé." as const,
+          snapshot: snapshot(entry, playerId),
+        };
+      }
+      const undoDeparture = dropDepartedForStart(entry, playerId, action);
+      const step = applyAction(entry.room, playerId, action);
+      if (!step.ok) {
+        undoDeparture();
+        if (expired) {
+          const saved = await commit(code, entry, true);
+          if (!saved) continue;
+        }
+        return {
+          error: step.error ?? "Coup refusé.",
+          snapshot: snapshot(entry, playerId),
+        };
+      }
+      entry.room = step.state;
+      notePresence(entry, playerId, true);
+      const saved = await commit(code, entry, true);
+      if (!saved) continue;
+      return { snapshot: snapshot(entry, playerId) };
     }
-    const openingFlip =
-      action.type === "flip" && entry.room.phase.kind === "opening";
-    if (!openingFlip && entry.room.revision !== revision) {
-      if (expired) await save(code, entry);
-      return {
-        error: "La partie a avancé." as const,
-        snapshot: snapshot(entry, playerId),
-      };
-    }
-    const undoDeparture = dropDepartedForStart(entry, playerId, action);
-    const step = applyAction(entry.room, playerId, action);
-    if (!step.ok) {
-      undoDeparture();
-      if (expired) await save(code, entry);
-      return {
-        error: step.error ?? "Coup refusé.",
-        snapshot: snapshot(entry, playerId),
-      };
-    }
-    entry.room = step.state;
-    notePresence(entry, playerId, true);
-    await save(code, entry);
-    return { snapshot: snapshot(entry, playerId) };
+    const latest = await load(code);
+    if (!latest) return { error: "Cette partie n'existe plus." as const };
+    return {
+      error: "La partie a avancé." as const,
+      snapshot: snapshot(latest, playerId),
+    };
   });
 }
 
@@ -365,10 +408,14 @@ function isMissingObject(error: {
 async function load(code: string) {
   const client = database();
   if (!client) return loadMemory(code);
-  const found = await readStored(client, code);
-  if (found) return found;
-  await delay(200);
-  return readStored(client, code);
+  const stored = await readTable(client, code);
+  if (stored) return stored;
+  const legacy = await readLegacy(client, code);
+  if (!legacy) return null;
+  legacy.version = 0;
+  const inserted = await save(code, legacy, true);
+  if (inserted) return legacy;
+  return readTable(client, code);
 }
 
 function loadMemory(code: string) {
@@ -382,7 +429,7 @@ function loadMemory(code: string) {
   return entry;
 }
 
-async function readStored(client: SupabaseClient, code: string) {
+async function readLegacy(client: SupabaseClient, code: string) {
   await ensureBucket(client);
   const { data, error } = await client.storage
     .from(BUCKET)
@@ -416,6 +463,7 @@ async function readStored(client: SupabaseClient, code: string) {
     seen: raw.seen ?? {},
     left: raw.left ?? [],
     leftAt: raw.leftAt ?? {},
+    version: raw.version ?? 0,
   });
 }
 
@@ -423,6 +471,7 @@ function normalizePresence(entry: Entry) {
   entry.seen ??= {};
   entry.left ??= [];
   entry.leftAt ??= {};
+  entry.version ??= 0;
   for (const id of entry.left) {
     if (typeof entry.leftAt[id] !== "number") {
       entry.leftAt[id] = entry.seen[id] ?? Date.now();
@@ -431,37 +480,122 @@ function normalizePresence(entry: Entry) {
   return entry;
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function readTable(client: SupabaseClient, code: string) {
+  const { data, error } = await client
+    .from(TABLE)
+    .select("payload, version")
+    .eq("code", code)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const raw = data.payload as Partial<Entry>;
+  if (!raw.room || typeof raw.createdAt !== "number") {
+    throw new Error("Partie illisible.");
+  }
+  if (Date.now() - raw.createdAt > ROOM_TTL) {
+    await client.from(TABLE).delete().eq("code", code);
+    return null;
+  }
+  return normalizePresence({
+    room: raw.room,
+    createdAt: raw.createdAt,
+    lastBot: raw.lastBot ?? 0,
+    seen: raw.seen ?? {},
+    left: raw.left ?? [],
+    leftAt: raw.leftAt ?? {},
+    version: Number(data.version) || 0,
+  });
 }
 
 async function save(code: string, entry: Entry, fresh = false) {
   const client = database();
   if (!client) {
     if (fresh && memory.has(code)) return false;
+    entry.version = (entry.version ?? 0) + 1;
     memory.set(code, entry);
     return true;
   }
 
-  await ensureBucket(client);
-  const body = new Blob([JSON.stringify(entry)], {
-    type: "application/json",
-  });
-  const { error } = await client.storage
-    .from(BUCKET)
-    .upload(`${code}.json`, body, {
-      upsert: !fresh,
-      contentType: "application/json",
-      cacheControl: "0",
+  if (fresh) {
+    entry.version = 1;
+    const { error } = await client.from(TABLE).insert({
+      code,
+      payload: entry,
+      version: 1,
     });
-  if (!error) return true;
-  const status = Number(error.status ?? error.statusCode);
-  const already =
-    status === 409 ||
-    ("code" in error && error.code === "ResourceAlreadyExists") ||
-    /already exists|duplicate/i.test(error.message);
-  if (fresh && already) return false;
-  throw new Error(error.message);
+    if (!error) return true;
+    if (
+      error.code === "23505" ||
+      /duplicate|already exists/i.test(error.message)
+    ) {
+      return false;
+    }
+    throw new Error(error.message);
+  }
+
+  const current = entry.version ?? 0;
+  const next = current + 1;
+  entry.version = next;
+  const { data, error } = await client
+    .from(TABLE)
+    .update({
+      payload: entry,
+      version: next,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("code", code)
+    .eq("version", current)
+    .select("version");
+  if (error) {
+    entry.version = current;
+    throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    entry.version = current;
+    return false;
+  }
+  return true;
+}
+
+async function commit(code: string, entry: Entry, notify: boolean) {
+  const saved = await save(code, entry, false);
+  if (saved && notify) publishRoom(code, entry.room.revision);
+  return saved;
+}
+
+function publishRoom(code: string, revision: number) {
+  const run = () => sendRevision(code, revision);
+  try {
+    after(() => {
+      void run();
+    });
+  } catch {
+    void run();
+  }
+}
+
+async function sendRevision(code: string, revision: number) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+  if (!url || !key) return;
+  await fetch(`${url}/realtime/v1/api/broadcast`, {
+    method: "POST",
+    headers: {
+      apikey: key,
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      messages: [
+        {
+          topic: `skyjo:${code}`,
+          event: "updated",
+          payload: { revision },
+        },
+      ],
+    }),
+  }).catch(() => undefined);
 }
 
 function withLock<T>(code: string, fn: () => Promise<T>): Promise<T> {

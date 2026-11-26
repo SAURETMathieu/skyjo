@@ -12,6 +12,8 @@ import {
   sendAction,
 } from "@/lib/skyjo/remote";
 import type { Action, GameView, RoomSnapshot } from "@/lib/skyjo/types";
+import { createClient } from "@/lib/supabase/client";
+import { hasSupabaseEnv } from "@/lib/supabase/env";
 import { GameScreen } from "@/components/skyjo/GameScreen";
 
 export function OnlineGame({ code }: { code: string }) {
@@ -38,50 +40,105 @@ export function OnlineGame({ code }: { code: string }) {
     let timer = 0;
     let announced = false;
     let misses = 0;
+    let live = false;
+    let pulling = false;
+    let again = false;
+    const supabase = hasSupabaseEnv() ? createClient() : null;
+    const channel = supabase
+      ? supabase
+          .channel(`skyjo:${code}`)
+          .on("broadcast", { event: "updated" }, () => {
+            void pull();
+          })
+          .subscribe((status) => {
+            live = status === "SUBSCRIBED";
+          })
+      : null;
 
-    async function poll() {
-      const back = !announced;
-      try {
-        const next = await fetchRoom(code, playerId, back);
-        if (stop) return;
-        announced = true;
-        misses = 0;
-        setMissing(false);
-        setError((current) =>
-          current === "Aucune partie avec ce code." ? null : current
-        );
-        setSnapshot((current) => {
-          if (
-            current?.member &&
-            next.member &&
-            next.view.revision < current.view.revision
-          ) {
-            return current;
-          }
-          return next;
-        });
-      } catch (caught) {
-        if (stop) return;
-        const message =
-          caught instanceof Error ? caught.message : "Partie introuvable.";
-        if (message === "Aucune partie avec ce code.") {
-          misses += 1;
-          if (misses >= 3 && !snapshotRef.current) {
-            setError(message);
-            setMissing(true);
-          }
-        } else {
-          misses = 0;
-          setError(message);
-        }
+    async function pull() {
+      if (stop) return;
+      if (pulling) {
+        again = true;
+        return;
       }
-      if (!stop) timer = window.setTimeout(() => void poll(), 500);
+      pulling = true;
+      try {
+        do {
+          again = false;
+          const back = !announced;
+          try {
+            const next = await fetchRoom(code, playerId, back);
+            if (stop) return;
+            announced = true;
+            misses = 0;
+            setMissing(false);
+            setError((current) =>
+              current === "Aucune partie avec ce code." ? null : current
+            );
+            const current = snapshotRef.current;
+            if (!(
+              current?.member &&
+              next.member &&
+              next.view.revision < current.view.revision
+            )) {
+              snapshotRef.current = next;
+            }
+            setSnapshot((shown) => {
+              if (
+                shown?.member &&
+                next.member &&
+                next.view.revision < shown.view.revision
+              ) {
+                return shown;
+              }
+              return next;
+            });
+          } catch (caught) {
+            if (stop) return;
+            const message =
+              caught instanceof Error ? caught.message : "Partie introuvable.";
+            if (message === "Aucune partie avec ce code.") {
+              misses += 1;
+              if (misses >= 3 && !snapshotRef.current) {
+                setError(message);
+                setMissing(true);
+              }
+            } else {
+              misses = 0;
+              setError(message);
+            }
+          }
+        } while (again && !stop);
+      } finally {
+        pulling = false;
+      }
     }
 
-    void poll();
+    function wait() {
+      const current = snapshotRef.current;
+      if (current?.member) {
+        const bot =
+          current.view.phase === "opening"
+            ? current.view.players.some((player) => player.isBot)
+            : current.view.players.some(
+                (player) => player.isBot && player.current
+              );
+        if (bot) return 1000;
+      }
+      return live ? 3000 : 1000;
+    }
+
+    async function tick() {
+      await pull();
+      if (stop) return;
+      timer = window.setTimeout(() => void tick(), wait());
+    }
+
+    void tick();
     return () => {
       stop = true;
       window.clearTimeout(timer);
+      if (channel) void supabase?.removeChannel(channel);
     };
   }, [code, playerId]);
 
