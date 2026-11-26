@@ -1,13 +1,18 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import type { NextConfig } from "next";
 
-const monorepoRoot = path.join(import.meta.dirname, "..");
+const appDir = import.meta.dirname;
+const monorepoRoot = path.join(appDir, "..");
+const projectRoot = existsSync(path.join(monorepoRoot, "node_modules"))
+  ? monorepoRoot
+  : appDir;
 
 const nextConfig: NextConfig = {
   agentRules: false,
-  outputFileTracingRoot: monorepoRoot,
+  outputFileTracingRoot: projectRoot,
   turbopack: {
-    root: monorepoRoot,
+    root: projectRoot,
   },
   transpilePackages: [
     "@SAURETMathieu/ui",
@@ -15,14 +20,6 @@ const nextConfig: NextConfig = {
     "@SAURETMathieu/context",
     "@SAURETMathieu/utils",
     "@SAURETMathieu/hooks",
-    "@SAURETMathieu/devtools",
-    "@SAURETMathieu/stores",
-    "@SAURETMathieu/csv-import",
-    "@SAURETMathieu/fields",
-    "@SAURETMathieu/rhf-fields",
-    "@SAURETMathieu/rbac-admin",
-    "@SAURETMathieu/tables",
-    "@SAURETMathieu/advanced-tables",
   ],
 };
 

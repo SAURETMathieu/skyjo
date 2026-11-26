@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "if [ -z \"$NPM_TOKEN\" ]; then echo \"NPM_TOKEN est requis pour télécharger les paquets GitHub.\" >&2; exit 1; fi && pnpm config set \"//npm.pkg.github.com/:_authToken\" \"$NPM_TOKEN\" && pnpm install --ignore-workspace",
+  "buildCommand": "pnpm run build"
+}
