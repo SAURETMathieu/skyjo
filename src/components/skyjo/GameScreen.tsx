@@ -21,6 +21,7 @@ import {
   Copy,
   Minus,
   Plus,
+  RefreshCw,
   Settings,
   Share2,
   Trophy,
@@ -48,12 +49,14 @@ export const GameScreen = memo(function GameScreen({
   view,
   onAction,
   onQuit,
+  onRefresh,
   busy = false,
   error,
 }: {
   view: GameView;
   onAction: PlayAction;
   onQuit: () => void;
+  onRefresh: () => void | Promise<void>;
   busy?: boolean;
   error?: string | null;
 }) {
@@ -81,6 +84,7 @@ export const GameScreen = memo(function GameScreen({
         settings={settings}
         onSettings={update}
         onQuit={onQuit}
+        onRefresh={onRefresh}
         onDone={() => setRevealRound(roundKey)}
       />
     );
@@ -91,6 +95,7 @@ export const GameScreen = memo(function GameScreen({
         view={view}
         onAction={onAction}
         onQuit={onQuit}
+        onRefresh={onRefresh}
         busy={busy}
         error={error}
         settings={settings}
@@ -104,6 +109,7 @@ export const GameScreen = memo(function GameScreen({
         view={view}
         onAction={onAction}
         onQuit={onQuit}
+        onRefresh={onRefresh}
         busy={busy}
         settings={settings}
         onSettings={update}
@@ -115,6 +121,7 @@ export const GameScreen = memo(function GameScreen({
       view={view}
       onAction={onAction}
       onQuit={onQuit}
+      onRefresh={onRefresh}
       busy={busy}
       error={error}
       settings={settings}
@@ -155,7 +162,9 @@ function useTurnCallout(active: boolean, duration = 1600) {
 
 function Shell({
   children,
+  code,
   onQuit,
+  onRefresh,
   felt = false,
   status,
   yours = false,
@@ -164,7 +173,9 @@ function Shell({
   onSettings,
 }: {
   children: ReactNode;
+  code?: string;
   onQuit: () => void;
+  onRefresh: () => void | Promise<void>;
   felt?: boolean;
   status?: string;
   yours?: boolean;
@@ -174,6 +185,17 @@ function Shell({
 }) {
   const [confirm, setConfirm] = useState(false);
   const [options, setOptions] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const online = Boolean(code && code !== "LOCAL");
+  async function refresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }
   return (
     <main
       className={`relative mx-auto flex h-dvh w-full max-w-lg flex-col overflow-hidden px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] text-white ${
@@ -181,7 +203,10 @@ function Shell({
       }`}
     >
       <div className="mb-2 grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <p className="text-lg font-extrabold tracking-tight">Skyjo</p>
+        <p className="truncate text-base font-extrabold tracking-tight">
+          Skyjo
+          {online ? ` - ${code}` : ""}
+        </p>
         {status ? (
           <p
             className={`justify-self-center rounded-full px-3 py-1 text-sm font-extrabold ${
@@ -196,6 +221,17 @@ function Shell({
           <span />
         )}
         <div className="flex items-center justify-self-end">
+          <button
+            type="button"
+            className="grid size-9 place-items-center rounded-full text-white/75 disabled:opacity-40"
+            aria-label="Rafraîchir"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+          >
+            <RefreshCw
+              className={`size-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+          </button>
           <button
             type="button"
             className="grid size-9 place-items-center rounded-full text-white/75"
@@ -326,6 +362,7 @@ function Lobby({
   view,
   onAction,
   onQuit,
+  onRefresh,
   busy,
   error,
   settings,
@@ -334,6 +371,7 @@ function Lobby({
   view: GameView;
   onAction: PlayAction;
   onQuit: () => void;
+  onRefresh: () => void | Promise<void>;
   busy: boolean;
   error?: string | null;
   settings: SkyjoSettings;
@@ -410,7 +448,13 @@ function Lobby({
   }
 
   return (
-    <Shell onQuit={onQuit} settings={settings} onSettings={onSettings}>
+    <Shell
+      code={view.code}
+      onQuit={onQuit}
+      onRefresh={onRefresh}
+      settings={settings}
+      onSettings={onSettings}
+    >
       <p className="text-center text-sm text-white/60">Code de la partie</p>
       <p className="mt-1 text-center text-5xl font-extrabold tracking-[0.28em]">
         {view.code}
@@ -524,6 +568,7 @@ function Board({
   view,
   onAction,
   onQuit,
+  onRefresh,
   busy,
   error,
   settings,
@@ -533,6 +578,7 @@ function Board({
   view: GameView;
   onAction: PlayAction;
   onQuit: () => void;
+  onRefresh: () => void | Promise<void>;
   busy: boolean;
   error?: string | null;
   settings: SkyjoSettings;
@@ -1073,7 +1119,9 @@ function Board({
 
   return (
     <Shell
+      code={view.code}
       onQuit={onQuit}
+      onRefresh={onRefresh}
       felt
       yours={view.yourTurn}
       status={view.yourTurn ? "À toi" : `Tour de ${current?.name ?? "…"}`}
@@ -1690,6 +1738,7 @@ function Summary({
   view,
   onAction,
   onQuit,
+  onRefresh,
   busy,
   settings,
   onSettings,
@@ -1697,6 +1746,7 @@ function Summary({
   view: GameView;
   onAction: PlayAction;
   onQuit: () => void;
+  onRefresh: () => void | Promise<void>;
   busy: boolean;
   settings: SkyjoSettings;
   onSettings: (patch: Partial<SkyjoSettings>) => void;
@@ -1710,7 +1760,13 @@ function Summary({
     : roundPoints(view, spotlight[0]?.id);
   const you = placed.find((entry) => entry.player.isYou);
   return (
-    <Shell onQuit={onQuit} settings={settings} onSettings={onSettings}>
+    <Shell
+      code={view.code}
+      onQuit={onQuit}
+      onRefresh={onRefresh}
+      settings={settings}
+      onSettings={onSettings}
+    >
       <p className="text-center text-sm font-bold text-white/60">
         {finished ? "Partie terminée" : `Manche ${view.round}`}
       </p>
@@ -1907,6 +1963,7 @@ function RoundReveal({
   settings,
   onSettings,
   onQuit,
+  onRefresh,
   onDone,
 }: {
   previous: GameView;
@@ -1914,6 +1971,7 @@ function RoundReveal({
   settings: SkyjoSettings;
   onSettings: (patch: Partial<SkyjoSettings>) => void;
   onQuit: () => void;
+  onRefresh: () => void | Promise<void>;
   onDone: () => void;
 }) {
   const steps = view.uncovered ?? [];
@@ -1944,7 +2002,9 @@ function RoundReveal({
 
   return (
     <Shell
+      code={view.code}
       onQuit={onQuit}
+      onRefresh={onRefresh}
       felt
       status="Fin de manche"
       settings={settings}

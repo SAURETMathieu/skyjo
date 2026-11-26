@@ -26,6 +26,7 @@ export function OnlineGame({ code }: { code: string }) {
   const [busy, setBusy] = useState(false);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
   const wasMember = useRef(false);
   if (snapshot?.member) wasMember.current = true;
 
@@ -63,6 +64,8 @@ export function OnlineGame({ code }: { code: string }) {
             live = status === "SUBSCRIBED";
           })
       : null;
+
+    refreshRef.current = pull;
 
     async function pull() {
       if (stop) return;
@@ -178,6 +181,7 @@ export function OnlineGame({ code }: { code: string }) {
     },
     [code, playerId]
   );
+  const refresh = useCallback(() => refreshRef.current(), []);
   const quit = useCallback(() => {
     void leaveRemoteRoom(code, playerId)
       .catch(() => undefined)
@@ -294,6 +298,7 @@ export function OnlineGame({ code }: { code: string }) {
       view={snapshot.view}
       onAction={act}
       onQuit={quit}
+      onRefresh={refresh}
       busy={busy}
       error={error}
     />

@@ -87,6 +87,9 @@ export function LocalGame({
     setRoom(step.state);
     return project(step.state, playerId);
   }, []);
+  const refresh = useCallback(() => {
+    window.location.reload();
+  }, []);
   const quit = useCallback(() => {
     if (!preview) sessionStorage.removeItem(LOCAL_KEY);
     router.push("/");
@@ -100,7 +103,15 @@ export function LocalGame({
     );
   }
 
-  return <GameScreen view={view} onAction={act} error={error} onQuit={quit} />;
+  return (
+    <GameScreen
+      view={view}
+      onAction={act}
+      error={error}
+      onQuit={quit}
+      onRefresh={refresh}
+    />
+  );
 }
 
 function previewRoom(name: string, preview: "manche" | "partie"): Room {
