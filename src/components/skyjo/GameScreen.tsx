@@ -24,7 +24,13 @@ import {
 } from "lucide-react";
 
 import { useSkyjoSettings, type SkyjoSettings } from "@/lib/skyjo/settings";
-import type { Action, GameView, ViewPlayer } from "@/lib/skyjo/types";
+import type {
+  Action,
+  GameView,
+  RevealCard,
+  ViewCell,
+  ViewPlayer,
+} from "@/lib/skyjo/types";
 import {
   botLevelLabel,
   BotLevelPicker,
@@ -49,6 +55,33 @@ export function GameScreen({
   error?: string | null;
 }) {
   const { settings, ready, update } = useSkyjoSettings();
+  const previousRef = useRef<GameView | null>(null);
+  const [revealRound, setRevealRound] = useState<string | null>(null);
+  const ending = view.phase === "between" || view.phase === "over";
+  const roundKey = `${view.code}:${view.round}`;
+  const previous = previousRef.current;
+  const canReveal =
+    ending &&
+    revealRound !== roundKey &&
+    previous !== null &&
+    previous.phase !== "between" &&
+    previous.phase !== "over" &&
+    previous.round === view.round &&
+    (view.uncovered ?? []).length > 0;
+  if (!ending) previousRef.current = view;
+
+  if (canReveal && previous) {
+    return (
+      <RoundReveal
+        previous={previous}
+        view={view}
+        settings={settings}
+        onSettings={update}
+        onQuit={onQuit}
+        onDone={() => setRevealRound(roundKey)}
+      />
+    );
+  }
   if (view.phase === "lobby") {
     return (
       <Lobby
@@ -1533,6 +1566,7 @@ function Summary({
   onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
   const finished = view.phase === "over";
+  const [boards, setBoards] = useState(false);
   const placed = ranked(view.players);
   const spotlight = finished ? gameWinners(view) : roundWinners(view);
   const spotlightScore = finished
@@ -1567,90 +1601,129 @@ function Summary({
           </p>
         ) : null}
       </div>
-      {you ? (
+      {you && !boards ? (
         <p className="mt-3 text-center text-sm font-extrabold text-amber-100">
           {standingLine(you, placed)}
         </p>
       ) : null}
       <p className="mt-5 text-center text-xs font-bold tracking-[0.22em] text-white/45">
-        CLASSEMENT
+        {boards ? "JEUX DE LA MANCHE" : "CLASSEMENT"}
       </p>
-      <ol className="mt-2 flex flex-col gap-2">
-        {placed.map(({ player, place }) => {
-          const score = view.summary?.find(
-            (entry) => entry.playerId === player.id
-          );
-          const color =
-            AVATAR[view.players.findIndex((entry) => entry.id === player.id)] ??
-            AVATAR[0];
-          return (
-            <li
-              key={player.id}
-              className={`flex items-center gap-3 rounded-2xl p-2.5 ${
-                player.isYou
-                  ? "border-2 border-amber-300 bg-amber-300/15"
-                  : "border-2 border-transparent bg-white/10"
-              }`}
-            >
-              <RankBadge place={place} />
-              <span
-                className={`grid size-9 shrink-0 place-items-center rounded-full text-sm font-extrabold ${color}`}
-                aria-hidden
+      {boards ? (
+        <div className="mt-3 flex flex-col gap-4">
+          {placed.map(({ player }) => {
+            const score = view.summary?.find(
+              (entry) => entry.playerId === player.id
+            );
+            return (
+              <section
+                key={player.id}
+                className={`rounded-2xl p-2.5 ${
+                  player.isYou
+                    ? "border-2 border-amber-300 bg-amber-300/15"
+                    : "border-2 border-transparent bg-white/10"
+                }`}
               >
-                {initial(player.name)}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="flex min-w-0 items-center gap-1.5 font-extrabold">
-                  <Presence player={player} />
+                <p className="mb-2 flex items-center gap-2 text-sm font-extrabold">
                   <span className="truncate">{player.name}</span>
                   {player.isYou ? (
                     <span className="shrink-0 rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-[#1a1405]">
                       TOI
                     </span>
                   ) : null}
-                  <PresenceNote
-                    player={player}
-                    rejoin={view.phase === "between"}
-                  />
+                  <span className="ml-auto shrink-0 tabular-nums">
+                    {score ? `Manche ${score.points}` : `${player.total} pts`}
+                  </span>
                 </p>
-                {score?.doubled ? (
-                  <p className="text-xs font-semibold text-amber-100/80">
-                    {score.raw} ×2 cette manche
-                  </p>
-                ) : null}
-              </div>
-              <div className="text-right">
-                <p className="text-base font-extrabold tabular-nums">
-                  {player.total} pts
-                </p>
-                {score ? (
-                  <p className="text-[11px] font-semibold text-white/50 tabular-nums">
-                    Manche {score.points}
-                  </p>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-      {view.phase === "between" ? (
-        <button
-          type="button"
-          className={`${primaryButton} mt-auto`}
-          disabled={busy}
-          onClick={() => onAction({ type: "next-round" })}
-        >
-          Manche suivante
-        </button>
+                <EndGrid player={player} />
+              </section>
+            );
+          })}
+        </div>
       ) : (
+        <ol className="mt-2 flex flex-col gap-2">
+          {placed.map(({ player, place }) => {
+            const score = view.summary?.find(
+              (entry) => entry.playerId === player.id
+            );
+            const color =
+              AVATAR[
+                view.players.findIndex((entry) => entry.id === player.id)
+              ] ?? AVATAR[0];
+            return (
+              <li
+                key={player.id}
+                className={`flex items-center gap-3 rounded-2xl p-2.5 ${
+                  player.isYou
+                    ? "border-2 border-amber-300 bg-amber-300/15"
+                    : "border-2 border-transparent bg-white/10"
+                }`}
+              >
+                <RankBadge place={place} />
+                <span
+                  className={`grid size-9 shrink-0 place-items-center rounded-full text-sm font-extrabold ${color}`}
+                  aria-hidden
+                >
+                  {initial(player.name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="flex min-w-0 items-center gap-1.5 font-extrabold">
+                    <Presence player={player} />
+                    <span className="truncate">{player.name}</span>
+                    {player.isYou ? (
+                      <span className="shrink-0 rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-[#1a1405]">
+                        TOI
+                      </span>
+                    ) : null}
+                    <PresenceNote
+                      player={player}
+                      rejoin={view.phase === "between"}
+                    />
+                  </p>
+                  {score?.doubled ? (
+                    <p className="text-xs font-semibold text-amber-100/80">
+                      {score.raw} ×2 cette manche
+                    </p>
+                  ) : null}
+                </div>
+                <div className="text-right">
+                  <p className="text-base font-extrabold tabular-nums">
+                    {player.total} pts
+                  </p>
+                  {score ? (
+                    <p className="text-[11px] font-semibold text-white/50 tabular-nums">
+                      Manche {score.points}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      <div className="mt-auto flex flex-col gap-2 pt-4">
         <button
           type="button"
-          className={`${primaryButton} mt-auto`}
-          onClick={onQuit}
+          className={secondaryButton}
+          onClick={() => setBoards((open) => !open)}
         >
-          Retour à l’accueil
+          {boards ? "Classement" : "Voir les jeux"}
         </button>
-      )}
+        {view.phase === "between" ? (
+          <button
+            type="button"
+            className={primaryButton}
+            disabled={busy}
+            onClick={() => onAction({ type: "next-round" })}
+          >
+            Manche suivante
+          </button>
+        ) : (
+          <button type="button" className={primaryButton} onClick={onQuit}>
+            Retour à l’accueil
+          </button>
+        )}
+      </div>
     </Shell>
   );
 }
@@ -1665,6 +1738,168 @@ const AVATAR = [
   "bg-teal-300 text-[#04201c]",
   "bg-fuchsia-400 text-[#240818]",
 ];
+
+function EndGrid({ player }: { player: ViewPlayer }) {
+  return (
+    <div className="grid grid-cols-4 gap-x-2 gap-y-2">
+      {player.grid.map((cell, index) => (
+        <CardFace
+          key={index}
+          size="sm"
+          value={cell.value}
+          faceUp={cell.faceUp}
+          empty={cell.empty}
+          framed={player.isYou}
+          indices={player.isYou}
+          settle
+          label={
+            cell.empty
+              ? `Colonne retirée, case ${index + 1}`
+              : `${player.name}, ${cell.value ?? "carte"}, case ${index + 1}`
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
+const REVEAL_STEP_MS = 460;
+
+function RoundReveal({
+  previous,
+  view,
+  settings,
+  onSettings,
+  onQuit,
+  onDone,
+}: {
+  previous: GameView;
+  view: GameView;
+  settings: SkyjoSettings;
+  onSettings: (patch: Partial<SkyjoSettings>) => void;
+  onQuit: () => void;
+  onDone: () => void;
+}) {
+  const steps = view.uncovered ?? [];
+  const [tick, setTick] = useState(0);
+  const done = useRef(onDone);
+  done.current = onDone;
+  const flipped = Math.min(tick, steps.length);
+  const cleared = Math.max(0, tick - 1);
+  const grids = gridsAfter(previous.players, steps, flipped, cleared);
+  const active = steps[Math.min(flipped, steps.length - 1)];
+  const player = view.players.find((entry) => entry.id === active?.playerId);
+  const mine = steps.filter((step) => step.playerId === active?.playerId);
+  const shown = mine.filter((step) =>
+    steps.slice(0, flipped).some((doneStep) => doneStep === step)
+  ).length;
+
+  useEffect(() => {
+    if (tick > steps.length) {
+      const pause = window.setTimeout(() => done.current(), 350);
+      return () => window.clearTimeout(pause);
+    }
+    const timer = window.setTimeout(
+      () => setTick((current) => current + 1),
+      REVEAL_STEP_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [tick, steps.length]);
+
+  return (
+    <Shell
+      onQuit={onQuit}
+      felt
+      status="Fin de manche"
+      settings={settings}
+      onSettings={onSettings}
+    >
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 py-6">
+        <p className="text-center text-xs font-bold tracking-[0.22em] text-white/45">
+          RETOUR DES CARTES
+        </p>
+        <p className="text-center text-2xl font-extrabold" aria-live="polite">
+          {player?.name ?? ""}
+        </p>
+        <p className="text-center text-sm font-bold text-white/60">
+          {shown} / {mine.length}
+        </p>
+        {view.players.map((entry) => (
+          <div
+            key={entry.id}
+            className={`w-full max-w-xs ${entry.id === active?.playerId ? "" : "hidden"}`}
+          >
+            <div className="grid grid-cols-4 gap-x-3 gap-y-2.5">
+              {(grids.get(entry.id) ?? entry.grid).map((cell, index) => (
+                <CardFace
+                  key={index}
+                  value={cell.value}
+                  faceUp={cell.faceUp}
+                  empty={cell.empty}
+                  framed={entry.isYou}
+                  indices={entry.isYou}
+                  label={
+                    cell.empty
+                      ? `Case ${index + 1} retirée`
+                      : cell.faceUp
+                        ? `${cell.value}, case ${index + 1}`
+                        : `Carte cachée, case ${index + 1}`
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          className={`${secondaryButton} mt-2 max-w-xs`}
+          onClick={() => done.current()}
+        >
+          Passer
+        </button>
+      </div>
+    </Shell>
+  );
+}
+
+function gridsAfter(
+  players: ViewPlayer[],
+  steps: RevealCard[],
+  flipped: number,
+  cleared: number
+) {
+  const grids = new Map<string, ViewCell[]>(
+    players.map((player) => [
+      player.id,
+      player.grid.map((cell) => ({ ...cell })),
+    ])
+  );
+  steps.slice(0, flipped).forEach((step, index) => {
+    const grid = grids.get(step.playerId);
+    const cell = grid?.[step.index];
+    if (!grid || !cell) return;
+    grid[step.index] = { empty: false, faceUp: true, value: step.value };
+    if (index < cleared) clearShownColumn(grid, step.index);
+  });
+  return grids;
+}
+
+function clearShownColumn(grid: ViewCell[], index: number) {
+  const column = index % 4;
+  const slots = [column, column + 4, column + 8].map((slot) => grid[slot]);
+  const value = slots[0]?.value;
+  if (
+    slots.some((slot) => !slot || slot.empty || !slot.faceUp) ||
+    value === null ||
+    value === undefined ||
+    slots.some((slot) => slot?.value !== value)
+  ) {
+    return;
+  }
+  for (const slot of [column, column + 4, column + 8]) {
+    grid[slot] = { empty: true, faceUp: false, value: null };
+  }
+}
 
 function RankBadge({ place }: { place: number }) {
   const tone =

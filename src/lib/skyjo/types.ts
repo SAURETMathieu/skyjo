@@ -47,6 +47,12 @@ export type RoundScore = {
   total: number;
 };
 
+export type RevealCard = {
+  playerId: string;
+  index: number;
+  value: number;
+};
+
 export type Room = {
   code: string;
   hostId: string;
@@ -62,6 +68,7 @@ export type Room = {
   pending: string[];
   lastRound: boolean;
   summary: RoundScore[] | null;
+  uncovered: RevealCard[];
   lastEvent: string;
   feed: string[];
 };
@@ -136,6 +143,7 @@ export type GameView = {
   hint: string;
   players: ViewPlayer[];
   summary: RoundScore[] | null;
+  uncovered: RevealCard[];
   winners: string[];
   flipsNeeded: number;
   actions: {

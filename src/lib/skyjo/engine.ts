@@ -62,6 +62,7 @@ export function createRoom(input: {
     pending: [],
     lastRound: false,
     summary: null,
+    uncovered: [],
     lastEvent: "Partie créée",
     feed: [],
   };
@@ -173,6 +174,7 @@ export function project(room: Room, youId: string): GameView {
       hidden: player.grid.filter((slot) => slot && !slot.faceUp).length,
     })),
     summary: room.summary,
+    uncovered: room.uncovered ?? [],
     winners:
       room.phase.kind === "over"
         ? room.players
@@ -368,6 +370,7 @@ function beginRound(room: Room, rng: () => number) {
   room.pending = [];
   room.lastRound = false;
   room.summary = null;
+  room.uncovered = [];
   room.phase = { kind: "opening" };
   const starterId = room.round === 1 ? null : room.closerId;
 
@@ -524,6 +527,14 @@ function finishTurn(room: Room, player: Player) {
 }
 
 function endRound(room: Room) {
+  const uncovered: { playerId: string; index: number; value: number }[] = [];
+  for (const player of revealPlayers(room)) {
+    player.grid.forEach((slot, index) => {
+      if (!slot || slot.faceUp) return;
+      uncovered.push({ playerId: player.id, index, value: slot.value });
+    });
+  }
+  room.uncovered = uncovered;
   for (const player of room.players) {
     for (const slot of player.grid) {
       if (slot) slot.faceUp = true;
@@ -632,6 +643,19 @@ function maxFaceUp(player: Player) {
     (max, slot) => (slot?.faceUp ? Math.max(max, slot.value) : max),
     Number.NEGATIVE_INFINITY
   );
+}
+
+function revealPlayers(room: Room) {
+  const start = room.closerId
+    ? room.players.findIndex((player) => player.id === room.closerId)
+    : 0;
+  const first = start < 0 ? 0 : start;
+  const ordered: Player[] = [];
+  for (let step = 0; step < room.players.length; step += 1) {
+    const player = room.players[(first + step) % room.players.length];
+    if (player) ordered.push(player);
+  }
+  return ordered;
 }
 
 function othersAfter(room: Room, playerId: string) {

@@ -12,6 +12,7 @@ import type {
   GameView,
   Room,
   RoundScore,
+  Slot,
 } from "@/lib/skyjo/types";
 import { GameScreen } from "@/components/skyjo/GameScreen";
 
@@ -151,12 +152,12 @@ function previewRoom(name: string, preview: "manche" | "partie"): Room {
     hostId: you,
     revision: 1,
     seq: 1,
-    players: players.map((player) => ({
+    players: players.map((player, index) => ({
       id: player.id,
       name: player.name,
       isBot: player.id !== you,
       total: player.total,
-      grid: [],
+      grid: previewGrid(index),
     })),
     deck: [],
     discard: [],
@@ -167,9 +168,21 @@ function previewRoom(name: string, preview: "manche" | "partie"): Room {
     pending: [],
     lastRound: false,
     summary,
+    uncovered: [],
     lastEvent: "",
     feed: [],
   };
+}
+
+function previewGrid(seed: number): Slot[] {
+  return Array.from({ length: 12 }, (_, index) => {
+    if (index % 4 === seed % 4) return null;
+    return {
+      id: `preview-${seed}-${index}`,
+      value: ((seed + index) % 13) - 2,
+      faceUp: true,
+    };
+  });
 }
 
 function createLocalRoom(name: string, bots: number, level: BotLevel) {

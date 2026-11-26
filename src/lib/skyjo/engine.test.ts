@@ -52,6 +52,7 @@ function room(partial: Partial<Room> & Pick<Room, "players" | "phase">): Room {
     pending: [],
     lastRound: false,
     summary: null,
+    uncovered: [],
     lastEvent: "",
     feed: [],
     ...partial,
@@ -291,6 +292,36 @@ test("une colonne révélée au décompte ne compte pas", () => {
   const ended = applyAction(state, host, { type: "flip", index: 0 });
   assert.equal(ended.state.summary?.[0]?.raw, 0);
   assert.equal(ended.state.players[0]?.grid[0], null);
+  assert.deepEqual(
+    ended.state.uncovered.map((card) => `${card.playerId}:${card.index}`),
+    ["b:11", `${host}:4`, `${host}:8`]
+  );
+});
+
+test("les cartes cachées se retournent joueur par joueur", () => {
+  const closer = zeros(12);
+  const next = zeros(12);
+  next[0] = down("n0", 5);
+  next[3] = down("n3", 1);
+  const last = zeros(12);
+  last[2] = down("l2", 8);
+  last[11] = down("l11", 4);
+  const ended = applyAction(
+    room({
+      players: [player(host, closer), player("b", next), player("c", last)],
+      phase: { kind: "flip" },
+      current: 2,
+      closerId: host,
+      lastRound: true,
+      pending: ["c"],
+    }),
+    "c",
+    { type: "flip", index: 11 }
+  );
+  assert.deepEqual(
+    ended.state.uncovered.map((card) => `${card.playerId}:${card.index}`),
+    ["b:0", "b:3", "c:2"]
+  );
 });
 
 test("la partie s'arrête à 100 et le plus petit score gagne", () => {
