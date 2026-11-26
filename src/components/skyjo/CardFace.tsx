@@ -12,6 +12,7 @@ export const CardFace = memo(function CardFace({
   highlight = false,
   framed = false,
   settle = false,
+  anticipate = false,
   onClick,
   label,
 }: {
@@ -24,22 +25,44 @@ export const CardFace = memo(function CardFace({
   highlight?: boolean;
   framed?: boolean;
   settle?: boolean;
+  anticipate?: boolean;
   onClick?: (element: HTMLElement) => void;
   label: string;
 }) {
   const revealed = useRef(faceUp);
+  const spinning = useRef(false);
+  const spinId = useRef(0);
   const clickRef = useRef(onClick);
   clickRef.current = onClick;
   const [flipping, setFlipping] = useState(false);
 
-  useEffect(() => {
-    const turning = faceUp && !revealed.current;
-    revealed.current = faceUp;
-    if (!turning || settle) return;
+  function beginSpin() {
+    if (spinning.current) return;
+    spinning.current = true;
+    const id = spinId.current + 1;
+    spinId.current = id;
     setFlipping(true);
-    const timer = window.setTimeout(() => setFlipping(false), 420);
-    return () => window.clearTimeout(timer);
-  }, [faceUp, settle]);
+    window.setTimeout(() => {
+      if (spinId.current !== id) return;
+      spinning.current = false;
+      setFlipping(false);
+    }, 420);
+  }
+
+  useEffect(() => {
+    if (settle) {
+      revealed.current = faceUp;
+      return;
+    }
+    const reveal = faceUp && !revealed.current;
+    if (reveal) {
+      revealed.current = true;
+      if (!spinning.current) beginSpin();
+      return;
+    }
+    revealed.current = faceUp;
+    if (anticipate && !faceUp) beginSpin();
+  }, [anticipate, faceUp, settle]);
 
   const palette = faceUp && value !== null ? CARD_STYLE[value] : undefined;
   const className = [
@@ -121,6 +144,7 @@ function sameCard(
     highlight?: boolean;
     framed?: boolean;
     settle?: boolean;
+    anticipate?: boolean;
     label: string;
   },
   next: {
@@ -133,6 +157,7 @@ function sameCard(
     highlight?: boolean;
     framed?: boolean;
     settle?: boolean;
+    anticipate?: boolean;
     label: string;
   }
 ) {
@@ -146,6 +171,7 @@ function sameCard(
     prev.highlight === next.highlight &&
     prev.framed === next.framed &&
     prev.settle === next.settle &&
+    prev.anticipate === next.anticipate &&
     prev.label === next.label
   );
 }

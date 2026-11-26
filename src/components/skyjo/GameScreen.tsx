@@ -601,7 +601,6 @@ function Board({
   const spotlight = view.phase !== "opening";
   const holding = view.hand !== null || view.opponentHolding;
   const revealedHold = view.hand ?? view.opponentHand;
-  const drawn = holding && view.holdFromDeck;
   const taken = holding && !view.holdFromDeck;
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -628,9 +627,11 @@ function Board({
     }
     if (busyRef.current || sending.current) return;
     sending.current = true;
+    setPendingFlip(index);
     const result = onActionRef.current({ type: "flip", index });
     void Promise.resolve(result).finally(() => {
       sending.current = false;
+      setPendingFlip((current) => (current === index ? null : current));
     });
   }, []);
   const [rows, setRows] = useState(1);
@@ -640,6 +641,13 @@ function Board({
   const [hideHold, setHideHold] = useState(false);
   const [drag, setDrag] = useState<CardDrag | null>(null);
   const [locking, setLocking] = useState<null | "deck" | "discard">(null);
+  const [pendingDraw, setPendingDraw] = useState(false);
+  const [pendingFlip, setPendingFlip] = useState<number | null>(null);
+  const awaitingDraw = pendingDraw && view.hand === null;
+  const drawn = (holding && view.holdFromDeck) || awaitingDraw;
+  const deckCount = awaitingDraw
+    ? Math.max(0, view.deckCount - 1)
+    : view.deckCount;
   const closer = view.players.find((player) => player.id === view.closerId);
   const finale = useTurnCallout(view.lastRound);
   const turn = useTurnCallout(
@@ -1166,12 +1174,12 @@ function Board({
           <section className="flex shrink-0 items-end gap-1.5 rounded-2xl bg-[#02150f]/80 px-2 pt-3 pb-1.5 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.5)]">
             <Pile
               title="Pioche"
-              detail={String(view.deckCount)}
+              detail={String(deckCount)}
               lifted={
                 drawn ? (
                   <CardFace
-                    faceUp={revealedHold !== null}
-                    value={revealedHold}
+                    faceUp={!awaitingDraw && revealedHold !== null}
+                    value={awaitingDraw ? null : revealedHold}
                     label={
                       revealedHold === null
                         ? "Carte piochée, cachée"
@@ -1180,7 +1188,7 @@ function Board({
                   />
                 ) : null
               }
-              secret={drawn && revealedHold === null}
+              secret={drawn && revealedHold === null && !awaitingDraw}
               hideLift={hideHold}
               sourceHidden={
                 (drag?.moved === true && drag.source === "deck") ||
@@ -1206,17 +1214,31 @@ function Board({
                   : undefined
               }
               enabled={view.actions.draw}
-              onClick={() => guarded(() => onAction({ type: "draw" }))}
+              onClick={() =>
+                guarded(() => {
+                  if (
+                    viewRef.current.actions.draw &&
+                    viewRef.current.hand === null
+                  ) {
+                    setPendingDraw(true);
+                  }
+                  const result = onAction({ type: "draw" });
+                  void Promise.resolve(result).finally(() =>
+                    setPendingDraw(false)
+                  );
+                  return result;
+                })
+              }
               label={
                 view.actions.draw
-                  ? `Piocher, ${view.deckCount} cartes`
-                  : `Pioche, ${view.deckCount} cartes`
+                  ? `Piocher, ${deckCount} cartes`
+                  : `Pioche, ${deckCount} cartes`
               }
             >
               <CardFace
                 faceUp={false}
                 value={null}
-                label={`Pioche, ${view.deckCount} cartes`}
+                label={`Pioche, ${deckCount} cartes`}
               />
             </Pile>
             <div className="flex w-8 flex-col items-center">
@@ -1351,6 +1373,7 @@ function Board({
                     interactive={canSwap || canFlip}
                     highlight={drag?.moved === true && drag.overCell === index}
                     settle={settled === index}
+                    turning={pendingFlip === index && !shown.faceUp}
                     onPlay={playAt}
                   />
                 );
@@ -1490,6 +1513,7 @@ const PlayCard = memo(function PlayCard({
   interactive,
   highlight,
   settle,
+  turning,
   onPlay,
 }: {
   cell: ViewCell;
@@ -1497,6 +1521,7 @@ const PlayCard = memo(function PlayCard({
   interactive: boolean;
   highlight: boolean;
   settle: boolean;
+  turning: boolean;
   onPlay: (index: number, element: HTMLElement) => void;
 }) {
   const column = (index % 4) + 1;
@@ -1510,6 +1535,7 @@ const PlayCard = memo(function PlayCard({
         indices
         framed
         settle={settle}
+        anticipate={turning}
         highlight={highlight}
         interactive={interactive}
         onClick={interactive ? (element) => onPlay(index, element) : undefined}
@@ -1532,6 +1558,7 @@ function samePlayCard(
     interactive: boolean;
     highlight: boolean;
     settle: boolean;
+    turning: boolean;
   },
   next: {
     cell: ViewCell;
@@ -1539,6 +1566,7 @@ function samePlayCard(
     interactive: boolean;
     highlight: boolean;
     settle: boolean;
+    turning: boolean;
   }
 ) {
   return (
@@ -1546,6 +1574,7 @@ function samePlayCard(
     prev.interactive === next.interactive &&
     prev.highlight === next.highlight &&
     prev.settle === next.settle &&
+    prev.turning === next.turning &&
     sameCell(prev.cell, next.cell)
   );
 }
