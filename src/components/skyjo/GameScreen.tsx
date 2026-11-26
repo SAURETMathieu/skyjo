@@ -26,6 +26,10 @@ import { useSkyjoSettings, type SkyjoSettings } from "@/lib/skyjo/settings";
 import type { Action, GameView, ViewPlayer } from "@/lib/skyjo/types";
 import { CardFace } from "@/components/skyjo/CardFace";
 
+type PlayAction = (
+  action: Action
+) => GameView | null | Promise<GameView | null>;
+
 export function GameScreen({
   view,
   onAction,
@@ -34,7 +38,7 @@ export function GameScreen({
   error,
 }: {
   view: GameView;
-  onAction: (action: Action) => void;
+  onAction: PlayAction;
   onQuit: () => void;
   busy?: boolean;
   error?: string | null;
@@ -287,7 +291,7 @@ function Lobby({
   onSettings,
 }: {
   view: GameView;
-  onAction: (action: Action) => void;
+  onAction: PlayAction;
   onQuit: () => void;
   busy: boolean;
   error?: string | null;
@@ -469,7 +473,7 @@ function Board({
   onSettings,
 }: {
   view: GameView;
-  onAction: (action: Action) => void;
+  onAction: PlayAction;
   onQuit: () => void;
   busy: boolean;
   error?: string | null;
@@ -489,14 +493,24 @@ function Board({
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const discardRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<DiscardDrag | null>(null);
+  const dragRef = useRef<CardDrag | null>(null);
+  const pickTask = useRef<Promise<GameView | null> | null>(null);
+  const blockClick = useRef(false);
+  const stopListeners = useRef<(() => void) | null>(null);
   const flightSeq = useRef(0);
+  const viewRef = useRef(view);
+  const onActionRef = useRef(onAction);
+  const busyRef = useRef(busy);
+  viewRef.current = view;
+  onActionRef.current = onAction;
+  busyRef.current = busy;
   const [rows, setRows] = useState(1);
   const [flights, setFlights] = useState<Flight[]>([]);
   const [covered, setCovered] = useState<CoveredCell | null>(null);
   const [settled, setSettled] = useState<number | null>(null);
   const [hideHold, setHideHold] = useState(false);
-  const [discardDrag, setDiscardDrag] = useState<DiscardDrag | null>(null);
+  const [drag, setDrag] = useState<CardDrag | null>(null);
+  const [locking, setLocking] = useState<null | "deck" | "discard">(null);
   const closer = view.players.find((player) => player.id === view.closerId);
   const finale = useTurnCallout(view.lastRound);
   const turn = useTurnCallout(
@@ -557,83 +571,210 @@ function Board({
     return () => observer.disconnect();
   }, [others.length, view.revision]);
 
+  useEffect(() => () => stopListeners.current?.(), []);
+
+  function resolveAction(
+    result: GameView | null | Promise<GameView | null>
+  ): Promise<GameView | null> {
+    return Promise.resolve(result).then((next) => next ?? null);
+  }
+
   function placeCard(index: number, target: HTMLElement) {
     const value = view.hand;
     const source = document.querySelector("[data-skyjo-held]");
+    if (value === null || !source) {
+      void resolveAction(onAction({ type: "swap", index }));
+      return;
+    }
+    const finish = launchCard(
+      index,
+      value,
+      source.getBoundingClientRect(),
+      target.getBoundingClientRect()
+    );
+    const result = onAction({ type: "swap", index });
+    if (result instanceof Promise)
+      void result.then((next) => finish(next != null));
+    else finish(result != null);
+  }
+
+  function launchCard(index: number | null, value: number, from: Box, to: Box) {
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
-    if (!reduce && source && value !== null) {
-      const id = flightSeq.current + 1;
-      flightSeq.current = id;
-      const previous = you?.grid[index];
-      setFlights((list) => [
-        ...list,
-        {
-          id,
-          value,
-          from: source.getBoundingClientRect(),
-          to: target.getBoundingClientRect(),
-        },
-      ]);
-      if (previous) {
-        setCovered({
-          index,
-          faceUp: previous.faceUp,
-          value: previous.value,
-          empty: previous.empty,
-        });
-      }
-      setHideHold(true);
-      setSettled(index);
-      window.setTimeout(() => {
-        setCovered((current) => (current?.index === index ? null : current));
-      }, 430);
-      window.setTimeout(() => {
+    if (reduce) return (_ok: boolean) => {};
+    const id = flightSeq.current + 1;
+    flightSeq.current = id;
+    const previous =
+      index === null
+        ? null
+        : viewRef.current.players.find((player) => player.isYou)?.grid[index];
+    const started = performance.now();
+    setFlights((list) => [...list, { id, value, from, to }]);
+    if (previous && !previous.empty && index !== null) {
+      setCovered({
+        index,
+        faceUp: previous.faceUp,
+        value: previous.value,
+        empty: previous.empty,
+      });
+    }
+    setHideHold(true);
+    if (index !== null) setSettled(index);
+    return (ok: boolean) => {
+      const clear = () => {
         setFlights((list) => list.filter((item) => item.id !== id));
         setHideHold(false);
-        setSettled((current) => (current === index ? null : current));
-      }, 480);
-    }
-    onAction({ type: "swap", index });
-  }
-
-  function overDiscard(x: number, y: number) {
-    const box = discardRef.current?.getBoundingClientRect();
-    if (!box) return false;
-    const pad = 20;
-    return (
-      x >= box.left - pad &&
-      x <= box.right + pad &&
-      y >= box.top - pad &&
-      y <= box.bottom + pad
-    );
-  }
-
-  function updateDiscardDrag(
-    event: ReactPointerEvent<HTMLDivElement>,
-    origin: DiscardDrag
-  ) {
-    const moved =
-      Math.hypot(event.clientX - origin.startX, event.clientY - origin.startY) >
-      8;
-    const next = {
-      ...origin,
-      x: event.clientX - origin.dx,
-      y: event.clientY - origin.dy,
-      moved,
-      over: moved && overDiscard(event.clientX, event.clientY),
+        if (index !== null) {
+          setCovered((current) => (current?.index === index ? null : current));
+          setSettled((current) => (current === index ? null : current));
+        }
+      };
+      if (!ok) {
+        clear();
+        return;
+      }
+      const elapsed = performance.now() - started;
+      window.setTimeout(
+        () => {
+          if (index !== null) {
+            setCovered((current) =>
+              current?.index === index ? null : current
+            );
+          }
+        },
+        Math.max(0, 430 - elapsed)
+      );
+      window.setTimeout(clear, Math.max(0, 480 - elapsed));
     };
-    dragRef.current = next;
-    setDiscardDrag(next);
   }
 
-  function startDiscardDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!view.actions.discardDrawn || busy || event.button !== 0) return;
+  function occupied(index: number) {
+    const cell = viewRef.current.players.find((player) => player.isYou)?.grid[
+      index
+    ];
+    return Boolean(cell && !cell.empty);
+  }
+
+  function cellAt(x: number, y: number) {
+    const direct = document
+      .elementFromPoint(x, y)
+      ?.closest("[data-skyjo-cell]");
+    const directIndex = direct
+      ? Number(direct.getAttribute("data-skyjo-cell"))
+      : null;
+    if (directIndex !== null && occupied(directIndex)) return directIndex;
+    let best: { index: number; distance: number } | null = null;
+    for (const node of document.querySelectorAll<HTMLElement>(
+      "[data-skyjo-cell]"
+    )) {
+      const index = Number(node.getAttribute("data-skyjo-cell"));
+      if (!occupied(index)) continue;
+      const card = node.querySelector("button, [role='img']");
+      if (!(card instanceof HTMLElement)) continue;
+      const box = card.getBoundingClientRect();
+      const pad = 10;
+      if (
+        x < box.left - pad ||
+        x > box.right + pad ||
+        y < box.top - pad ||
+        y > box.bottom + pad
+      ) {
+        continue;
+      }
+      const distance = Math.hypot(
+        x - (box.left + box.width / 2),
+        y - (box.top + box.height / 2)
+      );
+      if (!best || distance < best.distance) best = { index, distance };
+    }
+    return best?.index ?? null;
+  }
+
+  function hitDiscard(x: number, y: number) {
+    const zones = [
+      discardRef.current,
+      document.querySelector("[data-skyjo-discard-drop]"),
+    ];
+    return zones.some((node) => {
+      if (!node) return false;
+      const box = node.getBoundingClientRect();
+      const pad = 12;
+      return (
+        x >= box.left - pad &&
+        x <= box.right + pad &&
+        y >= box.top - pad &&
+        y <= box.bottom + pad
+      );
+    });
+  }
+
+  function cellBox(index: number) {
+    const slot = document.querySelector(`[data-skyjo-cell="${index}"]`);
+    const card = slot?.querySelector("button, [role='img']");
+    return card instanceof HTMLElement ? card.getBoundingClientRect() : null;
+  }
+
+  function rememberDrag(next: CardDrag) {
+    dragRef.current = next;
+    setDrag(next);
+  }
+
+  function clearDrag() {
+    dragRef.current = null;
+    pickTask.current = null;
+    setDrag(null);
+  }
+
+  function pickDeck() {
+    if (pickTask.current) return pickTask.current;
+    const task = resolveAction(onActionRef.current({ type: "draw" })).then(
+      (next) => {
+        const origin = dragRef.current;
+        if (origin?.source === "deck" && next?.hand != null) {
+          rememberDrag({ ...origin, value: next.hand, faceUp: true });
+        }
+        return next;
+      }
+    );
+    pickTask.current = task;
+    return task;
+  }
+
+  function startDrag(
+    source: DragSource,
+    event: ReactPointerEvent<HTMLElement>
+  ) {
+    if (event.button !== 0 || busyRef.current || dragRef.current) return;
+    const current = viewRef.current;
+    if (source === "deck" && (!current.actions.draw || current.hand !== null)) {
+      return;
+    }
+    if (source === "discard" && !current.actions.takeDiscard) return;
+    if (
+      source === "drawn" &&
+      (current.hand === null ||
+        !current.holdFromDeck ||
+        (!current.actions.swap && !current.actions.discardDrawn))
+    ) {
+      return;
+    }
+    if (
+      source === "taken" &&
+      (current.hand === null || current.holdFromDeck || !current.actions.swap)
+    ) {
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const next = {
+    const value =
+      source === "discard"
+        ? current.discardTop
+        : source === "deck"
+          ? null
+          : current.hand;
+    rememberDrag({
       pointerId: event.pointerId,
+      source,
       x: rect.left,
       y: rect.top,
       width: rect.width,
@@ -643,31 +784,164 @@ function Board({
       startX: event.clientX,
       startY: event.clientY,
       moved: false,
-      over: false,
+      overCell: null,
+      overDiscard: false,
+      value,
+      faceUp: value !== null,
+    });
+    const move = (pointer: PointerEvent) => {
+      const origin = dragRef.current;
+      if (!origin || origin.pointerId !== pointer.pointerId) return;
+      const moved =
+        origin.moved ||
+        Math.hypot(
+          pointer.clientX - origin.startX,
+          pointer.clientY - origin.startY
+        ) > 8;
+      if (moved && pointer.cancelable) pointer.preventDefault();
+      if (moved && !origin.moved) blockClick.current = true;
+      const overCell = moved ? cellAt(pointer.clientX, pointer.clientY) : null;
+      const canDiscard = origin.source === "deck" || origin.source === "drawn";
+      const latest = dragRef.current ?? origin;
+      rememberDrag({
+        ...origin,
+        value: latest.value,
+        faceUp: latest.faceUp,
+        x: pointer.clientX - origin.dx,
+        y: pointer.clientY - origin.dy,
+        moved,
+        overCell,
+        overDiscard:
+          moved &&
+          overCell === null &&
+          canDiscard &&
+          hitDiscard(pointer.clientX, pointer.clientY),
+      });
+      if (moved && origin.source === "deck") void pickDeck();
     };
-    dragRef.current = next;
-    setDiscardDrag(next);
+    const end = (pointer: PointerEvent) => {
+      if (dragRef.current?.pointerId !== pointer.pointerId) return;
+      stop();
+      window.setTimeout(() => {
+        blockClick.current = false;
+      }, 0);
+      void dropDrag(pointer, pointer.type === "pointercancel");
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (stopListeners.current === stop) stopListeners.current = null;
+    };
+    stopListeners.current = stop;
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
   }
 
-  function moveDiscardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+  async function dropDrag(pointer: PointerEvent, cancelled: boolean) {
     const origin = dragRef.current;
-    if (!origin || origin.pointerId !== event.pointerId) return;
-    updateDiscardDrag(event, origin);
-  }
-
-  function endDiscardDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    const origin = dragRef.current;
-    if (!origin || origin.pointerId !== event.pointerId) return;
+    if (!origin) return;
     const moved =
       origin.moved ||
-      Math.hypot(event.clientX - origin.startX, event.clientY - origin.startY) >
-        8;
-    const over = moved && overDiscard(event.clientX, event.clientY);
-    dragRef.current = null;
-    setDiscardDrag(null);
-    if (over && view.actions.discardDrawn && !busy) {
-      onAction({ type: "discard-drawn" });
+      Math.hypot(
+        pointer.clientX - origin.startX,
+        pointer.clientY - origin.startY
+      ) > 8;
+    if (!moved || cancelled) {
+      clearDrag();
+      return;
     }
+    const overCell = cellAt(pointer.clientX, pointer.clientY);
+    const canDiscard = origin.source === "deck" || origin.source === "drawn";
+    const overDiscard =
+      overCell === null &&
+      canDiscard &&
+      hitDiscard(pointer.clientX, pointer.clientY);
+    const from = {
+      left: pointer.clientX - origin.dx,
+      top: pointer.clientY - origin.dy,
+      width: origin.width,
+      height: origin.height,
+    };
+    if (overDiscard) {
+      const drawn =
+        origin.source === "deck" ? await pickDeck() : viewRef.current;
+      if (drawn?.hand == null || !drawn.actions.discardDrawn) {
+        clearDrag();
+        return;
+      }
+      const next = await resolveAction(
+        onActionRef.current({ type: "discard-drawn" })
+      );
+      clearDrag();
+      if (next == null) setHideHold(false);
+      return;
+    }
+    if (overCell === null) {
+      clearDrag();
+      return;
+    }
+    const target = cellBox(overCell);
+    if (!target) {
+      clearDrag();
+      return;
+    }
+    if (origin.source === "discard") {
+      if (origin.value === null) {
+        clearDrag();
+        return;
+      }
+      setLocking("discard");
+      clearDrag();
+      const finish = launchCard(overCell, origin.value, from, target);
+      const taken = await resolveAction(
+        onActionRef.current({ type: "take-discard" })
+      );
+      if (taken?.hand == null) {
+        setLocking(null);
+        finish(false);
+        return;
+      }
+      const swapped = await resolveAction(
+        onActionRef.current({ type: "swap", index: overCell })
+      );
+      setLocking(null);
+      finish(swapped != null);
+      return;
+    }
+    if (origin.source === "deck") {
+      const drawn = await pickDeck();
+      if (drawn?.hand == null) {
+        clearDrag();
+        return;
+      }
+      clearDrag();
+      const finish = launchCard(overCell, drawn.hand, from, target);
+      const swapped = await resolveAction(
+        onActionRef.current({ type: "swap", index: overCell })
+      );
+      finish(swapped != null);
+      return;
+    }
+    if (origin.value === null) {
+      clearDrag();
+      return;
+    }
+    clearDrag();
+    const finish = launchCard(overCell, origin.value, from, target);
+    const swapped = await resolveAction(
+      onActionRef.current({ type: "swap", index: overCell })
+    );
+    finish(swapped != null);
+  }
+
+  function guarded(action: () => void) {
+    if (blockClick.current) {
+      blockClick.current = false;
+      return;
+    }
+    action();
   }
 
   return (
@@ -733,19 +1007,32 @@ function Board({
               }
               secret={drawn && revealedHold === null}
               hideLift={hideHold}
-              heldHidden={discardDrag?.moved === true}
+              sourceHidden={
+                (drag?.moved === true && drag.source === "deck") ||
+                locking === "deck"
+              }
+              heldHidden={
+                drag?.moved === true &&
+                (drag.source === "drawn" || drag.source === "deck")
+              }
+              heldLabel="Glisser la carte piochée sur ton jeu ou vers la défausse"
               heldDrag={
-                view.actions.discardDrawn && !busy
+                view.hand !== null &&
+                view.holdFromDeck &&
+                !busy &&
+                (view.actions.swap || view.actions.discardDrawn)
                   ? {
-                      onPointerDown: startDiscardDrag,
-                      onPointerMove: moveDiscardDrag,
-                      onPointerUp: endDiscardDrag,
-                      onPointerCancel: endDiscardDrag,
+                      onPointerDown: (event) => startDrag("drawn", event),
                     }
                   : undefined
               }
+              onPointerDown={
+                view.actions.draw && view.hand === null && !busy
+                  ? (event) => startDrag("deck", event)
+                  : undefined
+              }
               enabled={view.actions.draw && !busy}
-              onClick={() => onAction({ type: "draw" })}
+              onClick={() => guarded(() => onAction({ type: "draw" }))}
               label={
                 view.actions.draw
                   ? `Piocher, ${view.deckCount} cartes`
@@ -762,6 +1049,7 @@ function Board({
               <div className="flex h-16 items-center">
                 <button
                   type="button"
+                  data-skyjo-discard-drop
                   aria-label="Défausser la carte piochée"
                   disabled={!view.actions.discardDrawn || busy}
                   onClick={() => onAction({ type: "discard-drawn" })}
@@ -783,7 +1071,7 @@ function Board({
             </div>
             <Pile
               pileRef={discardRef}
-              hot={discardDrag?.over === true}
+              hot={drag?.moved === true && drag.overDiscard}
               title="Défausse"
               lifted={
                 taken ? (
@@ -800,8 +1088,29 @@ function Board({
               }
               secret={taken && revealedHold === null}
               hideLift={hideHold}
+              sourceHidden={
+                (drag?.moved === true && drag.source === "discard") ||
+                locking === "discard"
+              }
+              heldHidden={drag?.moved === true && drag.source === "taken"}
+              heldLabel="Glisser la carte prise sur ton jeu"
+              heldDrag={
+                view.hand !== null &&
+                !view.holdFromDeck &&
+                view.actions.swap &&
+                !busy
+                  ? {
+                      onPointerDown: (event) => startDrag("taken", event),
+                    }
+                  : undefined
+              }
+              onPointerDown={
+                view.actions.takeDiscard && !busy
+                  ? (event) => startDrag("discard", event)
+                  : undefined
+              }
               enabled={view.actions.takeDiscard && !busy}
-              onClick={() => onAction({ type: "take-discard" })}
+              onClick={() => guarded(() => onAction({ type: "take-discard" }))}
               label={
                 view.actions.takeDiscard
                   ? `Prendre la défausse ${view.discardTop}`
@@ -862,50 +1171,59 @@ function Board({
                 const column = (index % 4) + 1;
                 const row = Math.floor(index / 4) + 1;
                 return (
-                  <CardFace
+                  <div
                     key={`${you.id}-${index}`}
-                    value={shown.value}
-                    faceUp={shown.faceUp}
-                    empty={shown.empty}
-                    indices
-                    framed
-                    settle={settled === index}
-                    interactive={canSwap || canFlip}
-                    onClick={
-                      canSwap || canFlip
-                        ? (element) => {
-                            if (canSwap) placeCard(index, element);
-                            else onAction({ type: "flip", index });
-                          }
-                        : undefined
-                    }
-                    label={
-                      shown.empty
-                        ? `Colonne ${column}, ligne ${row}, vide`
-                        : shown.faceUp
-                          ? `Colonne ${column}, ligne ${row}, ${shown.value}`
-                          : `Colonne ${column}, ligne ${row}, cachée`
-                    }
-                  />
+                    data-skyjo-cell={index}
+                    className="contents"
+                  >
+                    <CardFace
+                      value={shown.value}
+                      faceUp={shown.faceUp}
+                      empty={shown.empty}
+                      indices
+                      framed
+                      settle={settled === index}
+                      highlight={
+                        drag?.moved === true && drag.overCell === index
+                      }
+                      interactive={canSwap || canFlip}
+                      onClick={
+                        canSwap || canFlip
+                          ? (element) => {
+                              if (canSwap) placeCard(index, element);
+                              else onAction({ type: "flip", index });
+                            }
+                          : undefined
+                      }
+                      label={
+                        shown.empty
+                          ? `Colonne ${column}, ligne ${row}, vide`
+                          : shown.faceUp
+                            ? `Colonne ${column}, ligne ${row}, ${shown.value}`
+                            : `Colonne ${column}, ligne ${row}, cachée`
+                      }
+                    />
+                  </div>
                 );
               })}
             </div>
           </section>
         ) : null}
-        {discardDrag?.moved && view.hand !== null ? (
+        {drag?.moved ? (
           <div
+            aria-hidden
             className="pointer-events-none fixed z-30"
             style={{
-              left: discardDrag.x,
-              top: discardDrag.y,
-              width: discardDrag.width,
-              height: discardDrag.height,
+              left: drag.x,
+              top: drag.y,
+              width: drag.width,
+              height: drag.height,
             }}
           >
             <CardFace
-              faceUp
-              value={view.hand}
-              label={`Carte piochée ${view.hand}`}
+              faceUp={drag.faceUp}
+              value={drag.value}
+              label="Carte en cours de déplacement"
             />
           </div>
         ) : null}
@@ -924,8 +1242,13 @@ type CoveredCell = {
   empty: boolean;
 };
 
-type DiscardDrag = {
+type DragSource = "deck" | "discard" | "drawn" | "taken";
+
+type Box = { left: number; top: number; width: number; height: number };
+
+type CardDrag = {
   pointerId: number;
+  source: DragSource;
   x: number;
   y: number;
   width: number;
@@ -935,14 +1258,17 @@ type DiscardDrag = {
   startX: number;
   startY: number;
   moved: boolean;
-  over: boolean;
+  overCell: number | null;
+  overDiscard: boolean;
+  value: number | null;
+  faceUp: boolean;
 };
 
 type Flight = {
   id: number;
   value: number;
-  from: DOMRect;
-  to: DOMRect;
+  from: Box;
+  to: Box;
 };
 
 function FlyingCard({ flight }: { flight: Flight }) {
@@ -1036,10 +1362,13 @@ function Pile({
   lifted,
   secret = false,
   hideLift = false,
+  sourceHidden = false,
   heldHidden = false,
+  heldLabel,
   heldDrag,
   hot = false,
   enabled,
+  onPointerDown,
   onClick,
   label,
   children,
@@ -1050,15 +1379,15 @@ function Pile({
   lifted: ReactNode;
   secret?: boolean;
   hideLift?: boolean;
+  sourceHidden?: boolean;
   heldHidden?: boolean;
+  heldLabel?: string;
   heldDrag?: {
     onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
-    onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
-    onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
-    onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void;
   };
   hot?: boolean;
   enabled: boolean;
+  onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onClick: () => void;
   label: string;
   children: ReactNode;
@@ -1069,9 +1398,12 @@ function Pile({
         <button
           type="button"
           disabled={!enabled}
+          onPointerDown={onPointerDown}
           onClick={onClick}
           aria-label={label}
-          className={`relative z-10 block w-full ${hot ? "scale-105" : ""}`}
+          className={`relative z-10 block w-full touch-none ${
+            sourceHidden ? "opacity-0" : ""
+          }`}
         >
           {isValidElement(children)
             ? cloneElement(children as ReactElement<{ highlight?: boolean }>, {
@@ -1083,13 +1415,8 @@ function Pile({
           <div
             data-skyjo-held
             role={heldDrag ? "button" : undefined}
-            aria-label={
-              heldDrag ? "Glisser la carte piochée vers la défausse" : undefined
-            }
+            aria-label={heldDrag ? heldLabel : undefined}
             onPointerDown={heldDrag?.onPointerDown}
-            onPointerMove={heldDrag?.onPointerMove}
-            onPointerUp={heldDrag?.onPointerUp}
-            onPointerCancel={heldDrag?.onPointerCancel}
             className={`absolute inset-0 z-20 touch-none ${
               heldDrag
                 ? "cursor-grab active:cursor-grabbing"
@@ -1121,7 +1448,7 @@ function Summary({
   onSettings,
 }: {
   view: GameView;
-  onAction: (action: Action) => void;
+  onAction: PlayAction;
   onQuit: () => void;
   busy: boolean;
   settings: SkyjoSettings;

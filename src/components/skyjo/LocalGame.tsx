@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
 import { applyAction, createRoom, project } from "@/lib/skyjo/engine";
 import { getPlayerId, getSavedName } from "@/lib/skyjo/identity";
-import type { Action, Room } from "@/lib/skyjo/types";
+import type { Action, GameView, Room } from "@/lib/skyjo/types";
 import { GameScreen } from "@/components/skyjo/GameScreen";
 
 const LOCAL_KEY = "skyjo-local-room";
@@ -16,6 +16,8 @@ export function LocalGame({ bots }: { bots: number }) {
   const [room, setRoom] = useState<Room | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ready = useRef(false);
+  const roomRef = useRef<Room | null>(null);
+  roomRef.current = room;
 
   useEffect(() => {
     if (ready.current) return;
@@ -55,17 +57,20 @@ export function LocalGame({ bots }: { bots: number }) {
 
   const youId = room.players.find((player) => !player.isBot)?.id ?? room.hostId;
 
-  function act(action: Action) {
-    if (!room) return;
+  function act(action: Action): GameView | null {
+    const current = roomRef.current;
+    if (!current) return null;
     const playerId =
-      room.players.find((player) => !player.isBot)?.id ?? room.hostId;
-    const step = applyAction(room, playerId, action);
+      current.players.find((player) => !player.isBot)?.id ?? current.hostId;
+    const step = applyAction(current, playerId, action);
     if (!step.ok) {
       setError(step.error ?? "Coup impossible.");
-      return;
+      return null;
     }
     setError(null);
+    roomRef.current = step.state;
     setRoom(step.state);
+    return project(step.state, playerId);
   }
 
   return (

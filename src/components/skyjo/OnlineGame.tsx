@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getPlayerId, getSavedName, saveName } from "@/lib/skyjo/identity";
@@ -10,7 +10,7 @@ import {
   joinRemoteRoom,
   sendAction,
 } from "@/lib/skyjo/remote";
-import type { Action, RoomSnapshot } from "@/lib/skyjo/types";
+import type { Action, GameView, RoomSnapshot } from "@/lib/skyjo/types";
 import { GameScreen } from "@/components/skyjo/GameScreen";
 
 export function OnlineGame({ code }: { code: string }) {
@@ -21,6 +21,8 @@ export function OnlineGame({ code }: { code: string }) {
   const [missing, setMissing] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
 
   useEffect(() => {
     setPlayerId(getPlayerId());
@@ -64,22 +66,28 @@ export function OnlineGame({ code }: { code: string }) {
     };
   }, [code, playerId]);
 
-  async function act(action: Action) {
-    if (!snapshot?.member) return;
+  async function act(action: Action): Promise<GameView | null> {
+    const current = snapshotRef.current;
+    if (!current?.member) return null;
     setBusy(true);
     try {
       const next = await sendAction(
         code,
         playerId,
         action,
-        snapshot.view.revision
+        current.view.revision
       );
+      snapshotRef.current = next;
       setSnapshot(next);
       setError(null);
+      return next.member ? next.view : null;
     } catch (caught) {
-      if (isSnapshotError(caught) && caught.snapshot)
+      if (isSnapshotError(caught) && caught.snapshot) {
+        snapshotRef.current = caught.snapshot;
         setSnapshot(caught.snapshot);
+      }
       setError(caught instanceof Error ? caught.message : "Coup refusé.");
+      return null;
     } finally {
       setBusy(false);
     }
@@ -171,7 +179,7 @@ export function OnlineGame({ code }: { code: string }) {
   return (
     <GameScreen
       view={snapshot.view}
-      onAction={(action) => void act(action)}
+      onAction={act}
       onQuit={() => router.push("/")}
       busy={busy}
       error={error}
