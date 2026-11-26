@@ -338,12 +338,146 @@ test("un bot prend une petite défausse pour couvrir une grosse carte", () => {
     players: [player("bot", grid, { isBot: true, name: "Léo" })],
     phase: { kind: "choose" },
     discard: [card("d", -2)],
+    deck: [card("p", 4)],
     current: 0,
   });
   assert.deepEqual(suggest(state), {
     playerId: "bot",
     action: { type: "take-discard" },
   });
+});
+
+test("un bot facile prend une défausse à peine meilleure", () => {
+  const grid = zeros(12, false);
+  grid[0] = up("seven", 7);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "easy" })],
+    phase: { kind: "choose" },
+    discard: [card("d", 6)],
+    deck: [card("p", 4)],
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "take-discard" });
+});
+
+test("un bot normal laisse une défausse trop proche", () => {
+  const grid = zeros(12, false);
+  grid[0] = up("seven", 7);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "normal" })],
+    phase: { kind: "choose" },
+    discard: [card("d", 6)],
+    deck: [card("p", 4)],
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "draw" });
+});
+
+test("un bot difficile prend un 0 pour couvrir un 11", () => {
+  const grid = zeros(12, false);
+  grid[0] = up("eleven", 11);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "hard" })],
+    phase: { kind: "choose" },
+    discard: [card("d", 0)],
+    deck: [card("p", 4)],
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "take-discard" });
+});
+
+test("un bot difficile défausse un 8 qui ne couvre pas assez", () => {
+  const grid = zeros(12, false);
+  grid[0] = up("nine", 9);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "hard" })],
+    phase: { kind: "hold", card: card("h", 8), fromDeck: true },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "discard-drawn" });
+});
+
+test("un bot difficile ignore les cartes cachées", () => {
+  const grid = zeros(12, false);
+  grid[0] = up("zero", 0);
+  grid[1] = down("secret", 12);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "hard" })],
+    phase: { kind: "choose" },
+    discard: [card("d", 11)],
+    deck: [card("p", 4)],
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "draw" });
+});
+
+test("un bot difficile ferme quand son score bat la table", () => {
+  const grid = zeros(12);
+  grid[0] = down("last", 7);
+  const foe = zeros(12, false);
+  foe[0] = up("bad", 12);
+  const state = room({
+    players: [
+      player("bot", grid, { isBot: true, botLevel: "hard" }),
+      player("foe", foe),
+    ],
+    phase: { kind: "hold", card: card("h", 3), fromDeck: true },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "swap", index: 0 });
+});
+
+test("un bot difficile ne ferme pas s'il n'est pas devant", () => {
+  const grid = zeros(12);
+  grid[0] = down("last", 4);
+  grid[1] = up("high", 12);
+  const foe = zeros(12);
+  foe[0] = up("low", 1);
+  const state = room({
+    players: [
+      player("bot", grid, { isBot: true, botLevel: "hard" }),
+      player("foe", foe),
+    ],
+    phase: { kind: "hold", card: card("h", 0), fromDeck: true },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state)?.action, { type: "swap", index: 1 });
+});
+
+test("un bot difficile évite de retourner une colonne négative", () => {
+  const grid = zeros(12);
+  grid[0] = up("a", -1);
+  grid[4] = up("b", -1);
+  grid[8] = down("c", 9);
+  grid[1] = down("d", 2);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "hard" })],
+    phase: { kind: "flip" },
+    current: 0,
+  });
+  assert.deepEqual(suggest(state, () => 0)?.action, { type: "flip", index: 1 });
+});
+
+test("un bot normal retourne ses deux cartes dans des colonnes différentes", () => {
+  const grid = zeros(12, false);
+  grid[0] = up("open", 3);
+  const state = room({
+    players: [player("bot", grid, { isBot: true, botLevel: "normal" })],
+    phase: { kind: "opening" },
+    current: 0,
+  });
+  const action = suggest(state)?.action;
+  assert.equal(action?.type, "flip");
+  if (action?.type === "flip") assert.notEqual(action.index % 4, 0);
+});
+
+test("ajouter un bot retient le niveau choisi", () => {
+  const state = createRoom({ code: "ABCD", hostId: host, hostName: "Sam" });
+  const hard = applyAction(state, host, { type: "add-bot", level: "hard" });
+  assert.equal(hard.state.players[1]?.botLevel, "hard");
+  const plain = applyAction(state, host, { type: "add-bot" });
+  assert.equal(plain.state.players[1]?.botLevel, "normal");
+  assert.equal(project(hard.state, host).players[1]?.botLevel, "hard");
 });
 
 test("ce n'est pas le tour de l'autre joueur", () => {

@@ -9,10 +9,13 @@ export type Slot = {
   faceUp: boolean;
 } | null;
 
+export type BotLevel = "easy" | "normal" | "hard";
+
 export type Player = {
   id: string;
   name: string;
   isBot: boolean;
+  botLevel?: BotLevel;
   total: number;
   grid: Slot[];
 };
@@ -55,7 +58,7 @@ export type Room = {
 };
 
 export type Action =
-  | { type: "add-bot" }
+  | { type: "add-bot"; level?: BotLevel }
   | { type: "remove-bot"; playerId: string }
   | { type: "start" }
   | { type: "flip"; index: number }
@@ -81,6 +84,7 @@ export type ViewPlayer = {
   id: string;
   name: string;
   isBot: boolean;
+  botLevel?: BotLevel;
   isYou: boolean;
   connected: boolean;
   left: boolean;

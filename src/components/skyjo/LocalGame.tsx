@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
 import { applyAction, createRoom, project } from "@/lib/skyjo/engine";
 import { getPlayerId, getSavedName } from "@/lib/skyjo/identity";
-import type { Action, GameView, Room } from "@/lib/skyjo/types";
+import type { Action, BotLevel, GameView, Room } from "@/lib/skyjo/types";
 import { GameScreen } from "@/components/skyjo/GameScreen";
 
 const LOCAL_KEY = "skyjo-local-room";
 
-export function LocalGame({ bots }: { bots: number }) {
+export function LocalGame({ bots, level }: { bots: number; level: BotLevel }) {
   const router = useRouter();
   const [room, setRoom] = useState<Room | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +35,8 @@ export function LocalGame({ bots }: { bots: number }) {
       router.replace("/");
       return;
     }
-    setRoom(createLocalRoom(getSavedName() || "Toi", bots));
-  }, [bots, router]);
+    setRoom(createLocalRoom(getSavedName() || "Toi", bots, level));
+  }, [bots, level, router]);
 
   useEffect(() => {
     if (!room) return;
@@ -86,14 +86,17 @@ export function LocalGame({ bots }: { bots: number }) {
   );
 }
 
-function createLocalRoom(name: string, bots: number) {
+function createLocalRoom(name: string, bots: number, level: BotLevel) {
   let state = createRoom({
     code: "LOCAL",
     hostId: getPlayerId(),
     hostName: name,
   });
   for (let index = 0; index < bots; index += 1) {
-    const added = applyAction(state, state.hostId, { type: "add-bot" });
+    const added = applyAction(state, state.hostId, {
+      type: "add-bot",
+      level,
+    });
     if (added.ok) state = added.state;
   }
   const started = applyAction(state, state.hostId, { type: "start" });

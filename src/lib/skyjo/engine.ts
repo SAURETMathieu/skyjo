@@ -9,6 +9,7 @@ import {
 } from "@/lib/skyjo/cards";
 import type {
   Action,
+  BotLevel,
   Card,
   GameView,
   Phase,
@@ -161,6 +162,7 @@ export function project(room: Room, youId: string): GameView {
       id: player.id,
       name: player.name,
       isBot: player.isBot,
+      botLevel: player.isBot ? (player.botLevel ?? "normal") : undefined,
       isYou: player.id === youId,
       connected: true,
       left: false,
@@ -213,7 +215,7 @@ function mutate(
 ): string | null {
   switch (action.type) {
     case "add-bot":
-      return addBot(room, playerId);
+      return addBot(room, playerId, action.level ?? "normal");
     case "remove-bot":
       return removeBot(room, playerId, action.playerId);
     case "start":
@@ -240,7 +242,7 @@ function mutate(
   }
 }
 
-function addBot(room: Room, playerId: string) {
+function addBot(room: Room, playerId: string, level: BotLevel) {
   if (room.phase.kind !== "lobby") return "La partie a déjà commencé.";
   if (playerId !== room.hostId) return "Seul l'hôte peut ajouter un bot.";
   if (room.players.length >= MAX_PLAYERS) return "8 joueurs maximum.";
@@ -251,6 +253,7 @@ function addBot(room: Room, playerId: string) {
     id: `bot-${room.seq++}`,
     name,
     isBot: true,
+    botLevel: level,
     total: 0,
     grid: [],
   });

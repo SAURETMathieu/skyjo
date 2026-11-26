@@ -2,15 +2,25 @@
 
 import { useEffect, useState } from "react";
 
+import type { BotLevel } from "@/lib/skyjo/types";
+
 const KEY = "skyjo-settings";
 
 export type SkyjoSettings = {
   turnCallout: boolean;
+  botLevel: BotLevel;
 };
 
 const defaults: SkyjoSettings = {
   turnCallout: true,
+  botLevel: "normal",
 };
+
+function readLevel(value: unknown): BotLevel {
+  return value === "easy" || value === "normal" || value === "hard"
+    ? value
+    : "normal";
+}
 
 export function loadSettings(): SkyjoSettings {
   if (typeof window === "undefined") return defaults;
@@ -18,7 +28,10 @@ export function loadSettings(): SkyjoSettings {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<SkyjoSettings>;
-    return { turnCallout: parsed.turnCallout !== false };
+    return {
+      turnCallout: parsed.turnCallout !== false,
+      botLevel: readLevel(parsed.botLevel),
+    };
   } catch {
     return defaults;
   }

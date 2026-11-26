@@ -24,6 +24,10 @@ import {
 
 import { useSkyjoSettings, type SkyjoSettings } from "@/lib/skyjo/settings";
 import type { Action, GameView, ViewPlayer } from "@/lib/skyjo/types";
+import {
+  botLevelLabel,
+  BotLevelPicker,
+} from "@/components/skyjo/BotLevelPicker";
 import { CardFace } from "@/components/skyjo/CardFace";
 
 type PlayAction = (
@@ -407,6 +411,11 @@ function Lobby({
               <Presence player={player} />
               {player.isBot ? <Bot className="size-4" /> : null}
               <span className="truncate">{player.name}</span>
+              {player.isBot ? (
+                <span className="shrink-0 text-xs font-semibold text-white/55">
+                  {botLevelLabel(player.botLevel)}
+                </span>
+              ) : null}
               <PresenceNote player={player} />
               {player.id === view.hostId ? (
                 <span className="text-xs font-semibold text-amber-200">
@@ -430,11 +439,21 @@ function Lobby({
         ))}
       </ul>
       {view.youAreHost ? (
+        <div className="mt-4">
+          <BotLevelPicker
+            value={settings.botLevel}
+            onChange={(botLevel) => onSettings({ botLevel })}
+          />
+        </div>
+      ) : null}
+      {view.youAreHost ? (
         <button
           type="button"
           className={`${secondaryButton} mt-3`}
           disabled={!view.actions.addBot || busy}
-          onClick={() => onAction({ type: "add-bot" })}
+          onClick={() =>
+            onAction({ type: "add-bot", level: settings.botLevel })
+          }
         >
           <Plus className="size-4" />
           Ajouter un bot

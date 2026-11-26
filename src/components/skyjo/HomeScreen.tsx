@@ -7,6 +7,7 @@ import { Bot, Globe, LogIn, Settings } from "lucide-react";
 import { getPlayerId, getSavedName, saveName } from "@/lib/skyjo/identity";
 import { createRemoteRoom } from "@/lib/skyjo/remote";
 import { useSkyjoSettings } from "@/lib/skyjo/settings";
+import { BotLevelPicker } from "@/components/skyjo/BotLevelPicker";
 import { CardFace } from "@/components/skyjo/CardFace";
 
 const LOCAL_KEY = "skyjo-local-room";
@@ -56,7 +57,7 @@ export function HomeScreen() {
   function startBots() {
     if (!remember()) return;
     sessionStorage.removeItem(LOCAL_KEY);
-    router.push(`/jeu?bots=${bots}`);
+    router.push(`/jeu?bots=${bots}&level=${settings.botLevel}`);
   }
 
   function join() {
@@ -176,9 +177,15 @@ export function HomeScreen() {
               +
             </button>
           </div>
+          <div className="mt-5">
+            <BotLevelPicker
+              value={settings.botLevel}
+              onChange={(botLevel) => update({ botLevel })}
+            />
+          </div>
           <button
             type="button"
-            className={`${primaryButton} mt-6`}
+            className={`${primaryButton} mt-4`}
             onClick={startBots}
           >
             Commencer

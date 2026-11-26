@@ -1,5 +1,5 @@
 import { joinRemoteRoom, leaveRoom, play, readRoom } from "@/lib/skyjo/rooms";
-import type { Action } from "@/lib/skyjo/types";
+import type { Action, BotLevel } from "@/lib/skyjo/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,10 +83,17 @@ export async function POST(
   return Response.json({ error: "Requête invalide." }, { status: 400 });
 }
 
+function readLevel(value: unknown): BotLevel {
+  return value === "easy" || value === "normal" || value === "hard"
+    ? value
+    : "normal";
+}
+
 function parseAction(value: Action | undefined): Action | null {
   if (!value || typeof value !== "object") return null;
   switch (value.type) {
     case "add-bot":
+      return { type: "add-bot", level: readLevel(value.level) };
     case "start":
     case "draw":
     case "take-discard":
