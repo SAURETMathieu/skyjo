@@ -3,6 +3,7 @@
 import {
   cloneElement,
   isValidElement,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -54,18 +55,49 @@ export function GameScreen({
   );
 }
 
+function useTurnCallout(active: boolean) {
+  const [visible, setVisible] = useState(false);
+  const seen = useRef(false);
+  const hideTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      seen.current = false;
+      return;
+    }
+    if (seen.current) return;
+    seen.current = true;
+    setVisible(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      setVisible(false);
+      hideTimer.current = null;
+    }, 1600);
+  }, [active]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, []);
+
+  return visible;
+}
+
 function Shell({
   children,
   onQuit,
   felt = false,
   status,
   yours = false,
+  callout = false,
 }: {
   children: ReactNode;
   onQuit: () => void;
   felt?: boolean;
   status?: string;
   yours?: boolean;
+  callout?: boolean;
 }) {
   const [confirm, setConfirm] = useState(false);
   return (
@@ -100,6 +132,17 @@ function Shell({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {children}
       </div>
+      {callout ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="skyjo-callout pointer-events-none absolute inset-0 z-40 grid place-items-center bg-black/45 px-6"
+        >
+          <p className="rounded-full bg-amber-300 px-6 py-3 text-center text-2xl font-extrabold text-[#1a1405] shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
+            À toi de jouer
+          </p>
+        </div>
+      ) : null}
       {confirm ? (
         <div className="absolute inset-0 z-50 grid place-items-center bg-black/65 px-6">
           <div
@@ -284,6 +327,7 @@ function Board({
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState(1);
+  const callout = useTurnCallout(view.yourTurn && view.phase === "choose");
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -326,6 +370,7 @@ function Board({
       felt
       yours={view.yourTurn}
       status={view.yourTurn ? "À toi" : `Tour de ${current?.name ?? "…"}`}
+      callout={callout}
     >
       {others.length > 0 ? (
         <div

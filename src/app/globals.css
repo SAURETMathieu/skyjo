@@ -127,6 +127,25 @@
   animation: skyjo-arrow 0.85s ease-in-out infinite;
 }
 
+@keyframes skyjo-callout {
+  0% {
+    opacity: 0;
+  }
+  16% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.skyjo-callout {
+  animation: skyjo-callout 1.6s ease forwards;
+}
+
 .skyjo-opponents {
   scrollbar-color: rgba(252, 211, 77, 0.85) rgba(255, 255, 255, 0.1);
   scrollbar-width: thin;
@@ -148,7 +167,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .skyjo-arrow {
+  .skyjo-arrow,
+  .skyjo-callout {
     animation: none;
   }
 }
