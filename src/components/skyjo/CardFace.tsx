@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import { CARD_STYLE } from "@/lib/skyjo/cards";
 
 export function CardFace({
@@ -9,6 +11,7 @@ export function CardFace({
   indices = false,
   highlight = false,
   framed = false,
+  settle = false,
   onClick,
   label,
 }: {
@@ -20,9 +23,22 @@ export function CardFace({
   indices?: boolean;
   highlight?: boolean;
   framed?: boolean;
-  onClick?: () => void;
+  settle?: boolean;
+  onClick?: (element: HTMLElement) => void;
   label: string;
 }) {
+  const revealed = useRef(faceUp);
+  const [flipping, setFlipping] = useState(false);
+
+  useEffect(() => {
+    const turning = faceUp && !revealed.current;
+    revealed.current = faceUp;
+    if (!turning || settle) return;
+    setFlipping(true);
+    const timer = window.setTimeout(() => setFlipping(false), 420);
+    return () => window.clearTimeout(timer);
+  }, [faceUp, settle]);
+
   const palette = faceUp && value !== null ? CARD_STYLE[value] : undefined;
   const className = [
     "relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden font-extrabold tabular-nums select-none",
@@ -36,10 +52,11 @@ export function CardFace({
       : [
           framed ? "border-2 border-white" : "",
           highlight || interactive
-            ? "shadow-[0_0_0_2px_#fcd34d,0_8px_16px_rgba(0,0,0,0.32)]"
+            ? "skyjo-ring"
             : "shadow-[0_8px_16px_rgba(0,0,0,0.32)]",
         ].join(" "),
-    interactive ? "transition active:scale-[0.97]" : "",
+    flipping ? "skyjo-flip" : "",
+    interactive ? "transition-transform active:scale-[0.97]" : "",
   ].join(" ");
   const style = palette
     ? { background: palette.background, color: palette.color }
@@ -69,7 +86,7 @@ export function CardFace({
       <button
         type="button"
         aria-label={label}
-        onClick={onClick}
+        onClick={(event) => onClick?.(event.currentTarget)}
         disabled={!interactive}
         className={className}
         style={style}

@@ -146,6 +146,53 @@
   animation: skyjo-callout 1.6s ease forwards;
 }
 
+.skyjo-callout-short {
+  animation: skyjo-callout 0.9s ease forwards;
+}
+
+@keyframes skyjo-ring {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px rgba(252, 211, 77, 0.4),
+      0 8px 16px rgba(0, 0, 0, 0.32);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px rgba(252, 211, 77, 1),
+      0 0 14px rgba(252, 211, 77, 0.55),
+      0 8px 16px rgba(0, 0, 0, 0.32);
+  }
+}
+
+.skyjo-ring {
+  animation: skyjo-ring 1.15s ease-in-out infinite;
+}
+
+@keyframes skyjo-flip {
+  0% {
+    transform: scaleX(0.08);
+  }
+  60% {
+    transform: scaleX(1.05);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+.skyjo-flip {
+  animation: skyjo-flip 0.42s ease-out;
+}
+
+.skyjo-flight {
+  transition:
+    left 0.42s cubic-bezier(0.2, 0.75, 0.2, 1),
+    top 0.42s cubic-bezier(0.2, 0.75, 0.2, 1),
+    width 0.42s cubic-bezier(0.2, 0.75, 0.2, 1),
+    height 0.42s cubic-bezier(0.2, 0.75, 0.2, 1);
+}
+
 .skyjo-opponents {
   scrollbar-color: rgba(252, 211, 77, 0.85) rgba(255, 255, 255, 0.1);
   scrollbar-width: thin;
@@ -168,7 +215,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .skyjo-arrow,
-  .skyjo-callout {
+  .skyjo-callout,
+  .skyjo-callout-short,
+  .skyjo-ring,
+  .skyjo-flip,
+  .skyjo-flight {
     animation: none;
+    transition: none;
   }
 }

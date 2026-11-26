@@ -77,7 +77,7 @@ export function GameScreen({
   );
 }
 
-function useTurnCallout(active: boolean) {
+function useTurnCallout(active: boolean, duration = 1600) {
   const [visible, setVisible] = useState(false);
   const seen = useRef(false);
   const hideTimer = useRef<number | null>(null);
@@ -94,8 +94,8 @@ function useTurnCallout(active: boolean) {
     hideTimer.current = window.setTimeout(() => {
       setVisible(false);
       hideTimer.current = null;
-    }, 1600);
-  }, [active]);
+    }, duration);
+  }, [active, duration]);
 
   useEffect(() => {
     return () => {
@@ -173,7 +173,9 @@ function Shell({
         <div
           role="status"
           aria-live="polite"
-          className="skyjo-callout pointer-events-none absolute inset-0 z-40 grid place-items-center bg-[#041910]/55 px-6"
+          className={`pointer-events-none absolute inset-0 z-40 grid place-items-center bg-[#041910]/55 px-6 ${
+            callout.tone === "turn" ? "skyjo-callout-short" : "skyjo-callout"
+          }`}
         >
           <div
             className={`w-full max-w-xs rounded-3xl px-6 py-5 text-center shadow-2xl ${
@@ -432,14 +434,19 @@ function Board({
   const taken = holding && !view.holdFromDeck;
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const flightSeq = useRef(0);
   const [rows, setRows] = useState(1);
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [settled, setSettled] = useState<number | null>(null);
+  const [hideHold, setHideHold] = useState(false);
   const closer = view.players.find((player) => player.id === view.closerId);
   const finale = useTurnCallout(view.lastRound);
   const turn = useTurnCallout(
     settingsReady &&
       settings.turnCallout &&
       view.yourTurn &&
-      view.phase === "choose"
+      view.phase === "choose",
+    900
   );
   const closingLine = closer?.isYou
     ? "Tu as tout retourné"
@@ -491,6 +498,35 @@ function Board({
     observer.observe(bottom);
     return () => observer.disconnect();
   }, [others.length, view.revision]);
+
+  function placeCard(index: number, target: HTMLElement) {
+    const value = view.hand;
+    const source = document.querySelector("[data-skyjo-held]");
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    if (!reduce && source && value !== null) {
+      const id = flightSeq.current + 1;
+      flightSeq.current = id;
+      setFlights((list) => [
+        ...list,
+        {
+          id,
+          value,
+          from: source.getBoundingClientRect(),
+          to: target.getBoundingClientRect(),
+        },
+      ]);
+      setHideHold(true);
+      setSettled(index);
+      window.setTimeout(() => {
+        setFlights((list) => list.filter((item) => item.id !== id));
+        setHideHold(false);
+        setSettled((current) => (current === index ? null : current));
+      }, 460);
+    }
+    onAction({ type: "swap", index });
+  }
 
   return (
     <Shell
@@ -554,6 +590,7 @@ function Board({
                 ) : null
               }
               secret={drawn && revealedHold === null}
+              hideLift={hideHold}
               enabled={view.actions.draw && !busy}
               onClick={() => onAction({ type: "draw" })}
               label={
@@ -607,6 +644,7 @@ function Board({
                 ) : null
               }
               secret={taken && revealedHold === null}
+              hideLift={hideHold}
               enabled={view.actions.takeDiscard && !busy}
               onClick={() => onAction({ type: "take-discard" })}
               label={
@@ -674,15 +712,14 @@ function Board({
                     empty={cell.empty}
                     indices
                     framed
+                    settle={settled === index}
                     interactive={canSwap || canFlip}
                     onClick={
                       canSwap || canFlip
-                        ? () =>
-                            onAction(
-                              canSwap
-                                ? { type: "swap", index }
-                                : { type: "flip", index }
-                            )
+                        ? (element) => {
+                            if (canSwap) placeCard(index, element);
+                            else onAction({ type: "flip", index });
+                          }
                         : undefined
                     }
                     label={
@@ -698,8 +735,48 @@ function Board({
             </div>
           </section>
         ) : null}
+        {flights.map((flight) => (
+          <FlyingCard key={flight.id} flight={flight} />
+        ))}
       </div>
     </Shell>
+  );
+}
+
+type Flight = {
+  id: number;
+  value: number;
+  from: DOMRect;
+  to: DOMRect;
+};
+
+function FlyingCard({ flight }: { flight: Flight }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.style.left = `${flight.from.left}px`;
+    node.style.top = `${flight.from.top}px`;
+    node.style.width = `${flight.from.width}px`;
+    node.style.height = `${flight.from.height}px`;
+    const frame = requestAnimationFrame(() => {
+      node.style.left = `${flight.to.left}px`;
+      node.style.top = `${flight.to.top}px`;
+      node.style.width = `${flight.to.width}px`;
+      node.style.height = `${flight.to.height}px`;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [flight]);
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden
+      className="skyjo-flight pointer-events-none fixed z-30"
+    >
+      <CardFace faceUp value={flight.value} label="Carte posée" />
+    </div>
   );
 }
 
@@ -762,6 +839,7 @@ function Pile({
   detail,
   lifted,
   secret = false,
+  hideLift = false,
   enabled,
   onClick,
   label,
@@ -771,6 +849,7 @@ function Pile({
   detail?: string;
   lifted: ReactNode;
   secret?: boolean;
+  hideLift?: boolean;
   enabled: boolean;
   onClick: () => void;
   label: string;
@@ -792,8 +871,9 @@ function Pile({
               })
             : children}
         </button>
-        {lifted ? (
+        {lifted && !hideLift ? (
           <div
+            data-skyjo-held
             className={`pointer-events-none absolute inset-0 z-20 ${
               secret
                 ? "translate-y-[-70%] -rotate-6"
