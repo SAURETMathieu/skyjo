@@ -261,6 +261,88 @@ function addBot(room: Room, playerId: string, level: BotLevel) {
   return null;
 }
 
+export function dismissPlayer(
+  room: Room,
+  playerId: string,
+  rng: () => number = Math.random
+) {
+  const index = room.players.findIndex((player) => player.id === playerId);
+  const player = room.players[index];
+  if (!player || player.isBot || room.players.length <= 1) return false;
+  const wasCurrent = room.players[room.current]?.id === playerId;
+  const hidden: Card[] = [];
+  const revealed: Card[] = [];
+  for (const slot of player.grid) {
+    if (!slot) continue;
+    const card = { id: slot.id, value: slot.value };
+    if (slot.faceUp) revealed.push(card);
+    else hidden.push(card);
+  }
+  if (room.phase.kind === "hold" && wasCurrent) {
+    if (room.phase.fromDeck) hidden.push(room.phase.card);
+    else room.discard.push(room.phase.card);
+    room.phase = { kind: "choose" };
+  }
+  if (revealed.length > 0) room.discard = [...revealed, ...room.discard];
+  if (hidden.length > 0) room.deck = shuffle([...room.deck, ...hidden], rng);
+
+  room.players.splice(index, 1);
+  room.pending = room.pending.filter((id) => id !== playerId);
+  if (room.summary) {
+    room.summary = room.summary.filter((score) => score.playerId !== playerId);
+  }
+
+  if (room.players.length < MIN_PLAYERS) {
+    room.current = 0;
+    room.pending = [];
+    room.lastRound = false;
+    room.phase = { kind: "over" };
+    say(room, `${player.name} est retiré de la partie`);
+    room.revision += 1;
+    return true;
+  }
+
+  if (index < room.current) room.current -= 1;
+  if (room.current >= room.players.length) room.current = 0;
+
+  if (
+    room.phase.kind === "lobby" ||
+    room.phase.kind === "between" ||
+    room.phase.kind === "over"
+  ) {
+    say(room, `${player.name} est retiré de la partie`);
+    room.revision += 1;
+    return true;
+  }
+
+  if (room.phase.kind === "opening") {
+    say(room, `${player.name} est retiré de la partie`);
+    finishOpening(room);
+    room.revision += 1;
+    return true;
+  }
+
+  if (room.lastRound) {
+    if (room.pending.length === 0) {
+      say(room, `${player.name} est retiré de la partie`);
+      endRound(room);
+    } else if (wasCurrent) {
+      room.current = indexOf(room, room.pending[0] ?? "");
+      room.phase = { kind: "choose" };
+      say(room, `${player.name} est retiré de la partie`);
+    } else {
+      say(room, `${player.name} est retiré de la partie`);
+    }
+    room.revision += 1;
+    return true;
+  }
+
+  if (wasCurrent) room.phase = { kind: "choose" };
+  say(room, `${player.name} est retiré de la partie`);
+  room.revision += 1;
+  return true;
+}
+
 function removeBot(room: Room, playerId: string, botId: string) {
   if (room.phase.kind !== "lobby") return "La partie a déjà commencé.";
   if (playerId !== room.hostId) return "Seul l'hôte peut retirer un bot.";

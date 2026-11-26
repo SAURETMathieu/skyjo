@@ -1,13 +1,21 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
-import { applyAction, createRoom, joinRoom, project } from "@/lib/skyjo/engine";
+import { MIN_PLAYERS } from "@/lib/skyjo/cards";
+import {
+  applyAction,
+  createRoom,
+  dismissPlayer,
+  joinRoom,
+  project,
+} from "@/lib/skyjo/engine";
 import type { Action, Room, RoomSnapshot } from "@/lib/skyjo/types";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_TTL = 1000 * 60 * 60 * 8;
 const FRESH_MS = 5000;
 const SEEN_WRITE_MS = 1000;
+const REJOIN_MS = 2 * 60 * 1000;
 const BUCKET = "skyjo-rooms";
 
 type Entry = {
@@ -16,6 +24,7 @@ type Entry = {
   lastBot: number;
   seen: Record<string, number>;
   left: string[];
+  leftAt: Record<string, number>;
 };
 
 const store = globalThis as typeof globalThis & {
@@ -41,6 +50,7 @@ export function createRemoteRoom(playerId: string, name: string) {
           lastBot: 0,
           seen: { [playerId]: Date.now() },
           left: [],
+          leftAt: {},
         },
         true
       );
@@ -58,9 +68,10 @@ export function readRoom(code: string, playerId: string, restore = false) {
   return withLock(code, async () => {
     const entry = await load(code);
     if (!entry) return null;
+    const expired = expireDeparted(entry);
     const stepped = advance(entry);
     const noted = notePresence(entry, playerId, restore);
-    if (stepped || noted) await save(code, entry);
+    if (expired || stepped || noted) await save(code, entry);
     return snapshot(entry, playerId);
   });
 }
@@ -69,8 +80,12 @@ export function joinRemoteRoom(code: string, playerId: string, name: string) {
   return withLock(code, async () => {
     const entry = await load(code);
     if (!entry) return { error: "Aucune partie avec ce code." as const };
+    const expired = expireDeparted(entry);
     const step = joinRoom(entry.room, playerId, name);
-    if (!step.ok) return { error: step.error ?? "Impossible de rejoindre." };
+    if (!step.ok) {
+      if (expired) await save(code, entry);
+      return { error: step.error ?? "Impossible de rejoindre." };
+    }
     entry.room = step.state;
     notePresence(entry, playerId, true);
     await save(code, entry);
@@ -82,12 +97,17 @@ export function leaveRoom(code: string, playerId: string) {
   return withLock(code, async () => {
     const entry = await load(code);
     if (!entry) return null;
+    const expired = expireDeparted(entry);
     const player = entry.room.players.find(
       (seat) => seat.id === playerId && !seat.isBot
     );
-    if (!player) return snapshot(entry, playerId);
+    if (!player) {
+      if (expired) await save(code, entry);
+      return snapshot(entry, playerId);
+    }
     if (!entry.left.includes(playerId)) {
       entry.left.push(playerId);
+      entry.leftAt[playerId] = Date.now();
       entry.room.lastEvent = `${player.name} a quitté la partie`;
       entry.room.feed = [...entry.room.feed, entry.room.lastEvent].slice(-8);
       entry.room.revision += 1;
@@ -107,16 +127,29 @@ export function play(
   return withLock(code, async () => {
     const entry = await load(code);
     if (!entry) return { error: "Cette partie n'existe plus." as const };
+    const expired = expireDeparted(entry);
+    if (
+      action.type === "start" &&
+      entry.room.phase.kind === "lobby" &&
+      playerId === entry.room.hostId &&
+      seatedPlayers(entry, playerId).length < MIN_PLAYERS
+    ) {
+      return { error: "Il faut au moins 2 joueurs." as const };
+    }
     const openingFlip =
       action.type === "flip" && entry.room.phase.kind === "opening";
     if (!openingFlip && entry.room.revision !== revision) {
+      if (expired) await save(code, entry);
       return {
         error: "La partie a avancé." as const,
         snapshot: snapshot(entry, playerId),
       };
     }
+    const undoDeparture = dropDepartedForStart(entry, playerId, action);
     const step = applyAction(entry.room, playerId, action);
     if (!step.ok) {
+      undoDeparture();
+      if (expired) await save(code, entry);
       return {
         error: step.error ?? "Coup refusé.",
         snapshot: snapshot(entry, playerId),
@@ -150,12 +183,85 @@ function notePresence(entry: Entry, playerId: string, restore: boolean) {
   let changed = now - previous >= SEEN_WRITE_MS;
   if (restore && entry.left.includes(playerId)) {
     entry.left = entry.left.filter((id) => id !== playerId);
+    delete entry.leftAt[playerId];
     entry.room.lastEvent = `${player.name} est de retour`;
     entry.room.feed = [...entry.room.feed, entry.room.lastEvent].slice(-8);
     entry.room.revision += 1;
     changed = true;
   }
   return changed;
+}
+
+function expireDeparted(entry: Entry) {
+  const phase = entry.room.phase.kind;
+  if (phase === "lobby" || phase === "over") return false;
+  const now = Date.now();
+  let changed = false;
+  for (const id of [...entry.left]) {
+    const since = entry.leftAt[id] ?? entry.seen[id] ?? now;
+    if (now - since < REJOIN_MS) continue;
+    const seat = entry.room.players.some((player) => player.id === id);
+    if (seat && !dismissPlayer(entry.room, id)) continue;
+    entry.left = entry.left.filter((playerId) => playerId !== id);
+    delete entry.leftAt[id];
+    delete entry.seen[id];
+    changed = true;
+  }
+  return changed;
+}
+
+function seatedPlayers(entry: Entry, actorId: string) {
+  const gone = new Set(entry.left);
+  gone.delete(actorId);
+  return entry.room.players.filter((player) => !gone.has(player.id));
+}
+
+function dropDepartedForStart(entry: Entry, actorId: string, action: Action) {
+  if (
+    action.type !== "start" ||
+    entry.room.phase.kind !== "lobby" ||
+    actorId !== entry.room.hostId
+  ) {
+    return () => undefined;
+  }
+  const players = entry.room.players;
+  const left = entry.left;
+  const leftAt = entry.leftAt;
+  const seen = entry.seen;
+  const revision = entry.room.revision;
+  const lastEvent = entry.room.lastEvent;
+  const feed = entry.room.feed;
+  dropDeparted(entry, actorId);
+  return () => {
+    entry.room.players = players;
+    entry.left = left;
+    entry.leftAt = leftAt;
+    entry.seen = seen;
+    entry.room.revision = revision;
+    entry.room.lastEvent = lastEvent;
+    entry.room.feed = feed;
+  };
+}
+
+function dropDeparted(entry: Entry, actorId: string) {
+  const gone = new Set(entry.left);
+  gone.delete(actorId);
+  const removed = entry.room.players.filter((player) => gone.has(player.id));
+  if (removed.length === 0) return;
+  entry.room.players = entry.room.players.filter(
+    (player) => !gone.has(player.id)
+  );
+  entry.left = entry.left.filter((id) => !gone.has(id));
+  for (const player of removed) {
+    delete entry.leftAt[player.id];
+    delete entry.seen[player.id];
+  }
+  const names = removed.map((player) => player.name).join(", ");
+  const message =
+    removed.length > 1 ? `${names} ne jouent pas` : `${names} ne joue pas`;
+  entry.room.lastEvent = message;
+  entry.room.feed = [...entry.room.feed, message].slice(-8);
+  entry.room.revision += 1;
 }
 
 function snapshot(entry: Entry, playerId: string): RoomSnapshot {
@@ -183,6 +289,14 @@ function snapshot(entry: Entry, playerId: string): RoomSnapshot {
       player.isBot || (!left && (seen === undefined || now - seen < FRESH_MS));
     return { ...player, connected, left };
   });
+  if (view.phase === "lobby") {
+    const active = view.players.filter((player) => !player.left).length;
+    view.actions.start = view.youAreHost && active >= MIN_PLAYERS;
+    view.hint =
+      active < MIN_PLAYERS
+        ? "Ajoute un bot ou attends un joueur"
+        : "L'hôte peut lancer la partie";
+  }
   return { member: true, view };
 }
 
@@ -260,8 +374,7 @@ async function load(code: string) {
 function loadMemory(code: string) {
   const entry = memory.get(code);
   if (!entry) return null;
-  entry.seen ??= {};
-  entry.left ??= [];
+  normalizePresence(entry);
   if (Date.now() - entry.createdAt > ROOM_TTL) {
     memory.delete(code);
     return null;
@@ -296,13 +409,26 @@ async function readStored(client: SupabaseClient, code: string) {
     await client.storage.from(BUCKET).remove([`${code}.json`]);
     return null;
   }
-  return {
+  return normalizePresence({
     room: raw.room,
     createdAt: raw.createdAt,
     lastBot: raw.lastBot ?? 0,
     seen: raw.seen ?? {},
     left: raw.left ?? [],
-  };
+    leftAt: raw.leftAt ?? {},
+  });
+}
+
+function normalizePresence(entry: Entry) {
+  entry.seen ??= {};
+  entry.left ??= [];
+  entry.leftAt ??= {};
+  for (const id of entry.left) {
+    if (typeof entry.leftAt[id] !== "number") {
+      entry.leftAt[id] = entry.seen[id] ?? Date.now();
+    }
+  }
+  return entry;
 }
 
 function delay(ms: number) {

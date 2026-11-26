@@ -6,6 +6,7 @@ import {
   applyAction,
   canDraw,
   createRoom,
+  dismissPlayer,
   joinRoom,
   pickStarter,
   project,
@@ -609,6 +610,102 @@ test("ajouter un bot retient le niveau choisi", () => {
   const plain = applyAction(state, host, { type: "add-bot" });
   assert.equal(plain.state.players[1]?.botLevel, "normal");
   assert.equal(project(hard.state, host).players[1]?.botLevel, "hard");
+});
+
+test("retirer le joueur dont c'est le tour passe au suivant", () => {
+  const state = room({
+    players: [
+      player("a", [up("a1", 4), down("a2", 9)]),
+      player("b", [up("b1", 3), down("b2", 8)]),
+      player("c", zeros(2)),
+    ],
+    phase: { kind: "choose" },
+    deck: [card("deck", 1)],
+    discard: [card("top", 2)],
+    current: 0,
+  });
+  assert.equal(
+    dismissPlayer(state, "a", () => 0),
+    true
+  );
+  assert.deepEqual(
+    state.players.map((seat) => seat.id),
+    ["b", "c"]
+  );
+  assert.equal(state.current, 0);
+  assert.equal(state.phase.kind, "choose");
+  assert.equal(
+    state.deck.some((entry) => entry.id === "a2"),
+    true
+  );
+  assert.equal(state.discard.at(-1)?.id, "top");
+  assert.equal(
+    state.discard.some((entry) => entry.id === "a1"),
+    true
+  );
+});
+
+test("retirer un joueur qui tient une carte piochée la remet dans la pioche", () => {
+  const state = room({
+    players: [player("a", zeros(2)), player("b", zeros(2))],
+    phase: { kind: "hold", card: card("held", 6), fromDeck: true },
+    deck: [card("deck", 1)],
+    current: 0,
+  });
+  assert.equal(
+    dismissPlayer(state, "a", () => 0),
+    true
+  );
+  assert.equal(state.players.length, 1);
+  assert.equal(state.phase.kind, "over");
+  assert.equal(
+    state.deck.some((entry) => entry.id === "held"),
+    true
+  );
+});
+
+test("retirer un joueur pendant le dernier tour donne la main au suivant", () => {
+  const state = room({
+    players: [
+      player("a", zeros(2)),
+      player("b", zeros(2)),
+      player("c", zeros(2)),
+    ],
+    phase: { kind: "flip" },
+    lastRound: true,
+    pending: ["b", "c"],
+    closerId: "a",
+    current: 1,
+  });
+  assert.equal(
+    dismissPlayer(state, "b", () => 0),
+    true
+  );
+  assert.deepEqual(state.pending, ["c"]);
+  assert.equal(state.players[state.current]?.id, "c");
+  assert.equal(state.phase.kind, "choose");
+  assert.equal(state.lastRound, true);
+});
+
+test("retirer le dernier joueur sans cartes retournées débloque l'ouverture", () => {
+  const state = room({
+    players: [
+      player("a", [up("a1", 1), up("a2", 2)]),
+      player("b", [up("b1", 4), up("b2", 5)]),
+      player("c", [down("c1", 9), down("c2", 8)]),
+    ],
+    phase: { kind: "opening" },
+    current: 0,
+  });
+  assert.equal(
+    dismissPlayer(state, "c", () => 0),
+    true
+  );
+  assert.equal(state.phase.kind, "choose");
+  assert.equal(
+    state.players.some((seat) => seat.id === "c"),
+    false
+  );
 });
 
 test("ce n'est pas le tour de l'autre joueur", () => {

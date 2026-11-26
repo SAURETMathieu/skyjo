@@ -1180,7 +1180,7 @@ function Board({
               <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-extrabold">
                 <Presence player={you} />
                 <span className="truncate">{you.name}</span>
-                <PresenceNote player={you} />
+                <PresenceNote player={you} rejoin />
               </h2>
               <p
                 className="shrink-0 text-xs font-bold text-white/65 tabular-nums"
@@ -1354,11 +1354,17 @@ function Presence({ player }: { player: ViewPlayer }) {
   );
 }
 
-function PresenceNote({ player }: { player: ViewPlayer }) {
+function PresenceNote({
+  player,
+  rejoin = false,
+}: {
+  player: ViewPlayer;
+  rejoin?: boolean;
+}) {
   if (player.isBot || (player.connected && !player.left)) return null;
   return (
     <span className="shrink-0 text-xs font-semibold text-rose-200">
-      {player.left ? "A quitté" : "Hors ligne"}
+      {player.left ? (rejoin ? "Retour 2 min" : "A quitté") : "Hors ligne"}
     </span>
   );
 }
@@ -1406,7 +1412,7 @@ function Opponent({
       </p>
       {player.left || (!player.isBot && !player.connected) ? (
         <p className="mt-0.5 truncate text-[9px] leading-3 font-bold text-rose-200">
-          {player.left ? "A quitté" : "Hors ligne"}
+          {player.left ? "Retour 2 min" : "Hors ligne"}
         </p>
       ) : null}
       <div
@@ -1602,7 +1608,10 @@ function Summary({
                       TOI
                     </span>
                   ) : null}
-                  <PresenceNote player={player} />
+                  <PresenceNote
+                    player={player}
+                    rejoin={view.phase === "between"}
+                  />
                 </p>
                 {score?.doubled ? (
                   <p className="text-xs font-semibold text-amber-100/80">

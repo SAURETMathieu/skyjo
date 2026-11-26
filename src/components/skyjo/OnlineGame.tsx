@@ -24,6 +24,8 @@ export function OnlineGame({ code }: { code: string }) {
   const [busy, setBusy] = useState(false);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const wasMember = useRef(false);
+  if (snapshot?.member) wasMember.current = true;
 
   useEffect(() => {
     setPlayerId(getPlayerId());
@@ -155,6 +157,28 @@ export function OnlineGame({ code }: { code: string }) {
         <div>
           <p>Connexion…</p>
           {error ? <p className="mt-2 text-sm text-rose-200">{error}</p> : null}
+        </div>
+      </main>
+    );
+  }
+
+  if (!snapshot.member && wasMember.current) {
+    return (
+      <main className="mx-auto grid min-h-dvh w-full max-w-lg place-items-center px-6 text-center text-white">
+        <div>
+          <p className="text-xl font-extrabold">
+            Tu n’es plus dans cette partie
+          </p>
+          <p className="mt-2 text-white/70">
+            Le délai de 2 minutes pour revenir est dépassé.
+          </p>
+          <button
+            type="button"
+            className="mt-6 font-bold text-amber-200"
+            onClick={() => router.push("/")}
+          >
+            Retour
+          </button>
         </div>
       </main>
     );
