@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Globe, LogIn } from "lucide-react";
+import { Bot, Globe, LogIn, Settings } from "lucide-react";
 
 import { getPlayerId, getSavedName, saveName } from "@/lib/skyjo/identity";
 import { createRemoteRoom } from "@/lib/skyjo/remote";
+import { useSkyjoSettings } from "@/lib/skyjo/settings";
 import { CardFace } from "@/components/skyjo/CardFace";
 
 const LOCAL_KEY = "skyjo-local-room";
@@ -13,13 +14,14 @@ const LOCAL_KEY = "skyjo-local-room";
 export function HomeScreen() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [panel, setPanel] = useState<"home" | "bots" | "join" | "rules">(
-    "home"
-  );
+  const [panel, setPanel] = useState<
+    "home" | "bots" | "join" | "rules" | "options"
+  >("home");
   const [bots, setBots] = useState(2);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { settings, update } = useSkyjoSettings();
 
   useEffect(() => {
     setName(getSavedName());
@@ -135,6 +137,14 @@ export function HomeScreen() {
           <button
             type="button"
             className="mt-2 text-sm font-bold text-white/70"
+            onClick={() => setPanel("options")}
+          >
+            <Settings className="mr-1 inline size-4" />
+            Options
+          </button>
+          <button
+            type="button"
+            className="text-sm font-bold text-white/70"
             onClick={() => setPanel("rules")}
           >
             Voir les règles
@@ -207,6 +217,38 @@ export function HomeScreen() {
           <button
             type="button"
             className="mt-3 w-full text-sm text-white/70"
+            onClick={() => setPanel("home")}
+          >
+            Retour
+          </button>
+        </div>
+      ) : null}
+
+      {panel === "options" ? (
+        <div className="mt-6">
+          <p className="text-center text-lg font-extrabold">Options</p>
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl bg-white/10 px-4 py-3">
+            <p className="text-sm font-bold">Message « À toi de jouer »</p>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.turnCallout}
+              aria-label="Message À toi de jouer"
+              onClick={() => update({ turnCallout: !settings.turnCallout })}
+              className={`relative h-7 w-12 shrink-0 rounded-full ${
+                settings.turnCallout ? "bg-amber-300" : "bg-white/20"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 size-6 rounded-full bg-[#1a1405] ${
+                  settings.turnCallout ? "left-5" : "left-0.5"
+                }`}
+              />
+            </button>
+          </div>
+          <button
+            type="button"
+            className={`${secondaryButton} mt-4`}
             onClick={() => setPanel("home")}
           >
             Retour

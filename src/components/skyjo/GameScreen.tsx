@@ -10,8 +10,17 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { ArrowRight, Bot, Copy, Minus, Plus, Share2 } from "lucide-react";
+import {
+  ArrowRight,
+  Bot,
+  Copy,
+  Minus,
+  Plus,
+  Settings,
+  Share2,
+} from "lucide-react";
 
+import { useSkyjoSettings, type SkyjoSettings } from "@/lib/skyjo/settings";
 import type { Action, GameView, ViewPlayer } from "@/lib/skyjo/types";
 import { CardFace } from "@/components/skyjo/CardFace";
 
@@ -28,6 +37,7 @@ export function GameScreen({
   busy?: boolean;
   error?: string | null;
 }) {
+  const { settings, ready, update } = useSkyjoSettings();
   if (view.phase === "lobby") {
     return (
       <Lobby
@@ -36,12 +46,21 @@ export function GameScreen({
         onQuit={onQuit}
         busy={busy}
         error={error}
+        settings={settings}
+        onSettings={update}
       />
     );
   }
   if (view.phase === "between" || view.phase === "over") {
     return (
-      <Summary view={view} onAction={onAction} onQuit={onQuit} busy={busy} />
+      <Summary
+        view={view}
+        onAction={onAction}
+        onQuit={onQuit}
+        busy={busy}
+        settings={settings}
+        onSettings={update}
+      />
     );
   }
   return (
@@ -51,6 +70,9 @@ export function GameScreen({
       onQuit={onQuit}
       busy={busy}
       error={error}
+      settings={settings}
+      settingsReady={ready}
+      onSettings={update}
     />
   );
 }
@@ -90,16 +112,21 @@ function Shell({
   felt = false,
   status,
   yours = false,
-  callout = false,
+  callout = null,
+  settings,
+  onSettings,
 }: {
   children: ReactNode;
   onQuit: () => void;
   felt?: boolean;
   status?: string;
   yours?: boolean;
-  callout?: boolean;
+  callout?: { title: string; detail?: string; tone: "turn" | "finale" } | null;
+  settings: SkyjoSettings;
+  onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const [options, setOptions] = useState(false);
   return (
     <main
       className={`relative mx-auto flex h-dvh w-full max-w-lg flex-col overflow-hidden px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] text-white ${
@@ -121,13 +148,23 @@ function Shell({
         ) : (
           <span />
         )}
-        <button
-          type="button"
-          className="justify-self-end rounded-full px-3 py-2 text-sm text-white/75"
-          onClick={() => setConfirm(true)}
-        >
-          Quitter
-        </button>
+        <div className="flex items-center justify-self-end">
+          <button
+            type="button"
+            className="grid size-9 place-items-center rounded-full text-white/75"
+            aria-label="Options"
+            onClick={() => setOptions(true)}
+          >
+            <Settings className="size-4" />
+          </button>
+          <button
+            type="button"
+            className="rounded-full px-3 py-2 text-sm text-white/75"
+            onClick={() => setConfirm(true)}
+          >
+            Quitter
+          </button>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {children}
@@ -136,11 +173,70 @@ function Shell({
         <div
           role="status"
           aria-live="polite"
-          className="skyjo-callout pointer-events-none absolute inset-0 z-40 grid place-items-center bg-black/45 px-6"
+          className="skyjo-callout pointer-events-none absolute inset-0 z-40 grid place-items-center bg-[#041910]/55 px-6"
         >
-          <p className="rounded-full bg-amber-300 px-6 py-3 text-center text-2xl font-extrabold text-[#1a1405] shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
-            À toi de jouer
-          </p>
+          <div
+            className={`w-full max-w-xs rounded-3xl px-6 py-5 text-center shadow-2xl ${
+              callout.tone === "finale"
+                ? "bg-[#3a140c] text-white ring-2 ring-rose-200"
+                : "bg-amber-300 text-[#1a1405]"
+            }`}
+          >
+            <p className="text-2xl font-extrabold">{callout.title}</p>
+            {callout.detail ? (
+              <p
+                className={`mt-1 text-sm font-bold ${
+                  callout.tone === "finale"
+                    ? "text-white/80"
+                    : "text-[#1a1405]/75"
+                }`}
+              >
+                {callout.detail}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      {options ? (
+        <div className="absolute inset-0 z-50 grid place-items-center bg-black/65 px-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="options-title"
+            className="w-full max-w-xs rounded-3xl bg-[#0b3a28] p-5 shadow-2xl ring-1 ring-white/15"
+          >
+            <p id="options-title" className="text-lg font-extrabold">
+              Options
+            </p>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-sm font-bold">Message « À toi de jouer »</p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.turnCallout}
+                aria-label="Message À toi de jouer"
+                onClick={() =>
+                  onSettings({ turnCallout: !settings.turnCallout })
+                }
+                className={`relative h-7 w-12 shrink-0 rounded-full ${
+                  settings.turnCallout ? "bg-amber-300" : "bg-white/20"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 size-6 rounded-full bg-[#1a1405] transition ${
+                    settings.turnCallout ? "left-5" : "left-0.5"
+                  }`}
+                />
+              </button>
+            </div>
+            <button
+              type="button"
+              className="mt-5 h-12 w-full rounded-2xl bg-white/10 font-extrabold"
+              onClick={() => setOptions(false)}
+            >
+              Fermer
+            </button>
+          </div>
         </div>
       ) : null}
       {confirm ? (
@@ -183,12 +279,16 @@ function Lobby({
   onQuit,
   busy,
   error,
+  settings,
+  onSettings,
 }: {
   view: GameView;
   onAction: (action: Action) => void;
   onQuit: () => void;
   busy: boolean;
   error?: string | null;
+  settings: SkyjoSettings;
+  onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const link =
@@ -211,7 +311,7 @@ function Lobby({
   }
 
   return (
-    <Shell onQuit={onQuit}>
+    <Shell onQuit={onQuit} settings={settings} onSettings={onSettings}>
       <p className="text-center text-sm text-white/60">Code de la partie</p>
       <p className="mt-1 text-center text-5xl font-extrabold tracking-[0.28em]">
         {view.code}
@@ -308,12 +408,18 @@ function Board({
   onQuit,
   busy,
   error,
+  settings,
+  settingsReady,
+  onSettings,
 }: {
   view: GameView;
   onAction: (action: Action) => void;
   onQuit: () => void;
   busy: boolean;
   error?: string | null;
+  settings: SkyjoSettings;
+  settingsReady: boolean;
+  onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
   const you = view.players.find((player) => player.isYou);
   const others = view.players.filter((player) => !player.isYou);
@@ -327,7 +433,29 @@ function Board({
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState(1);
-  const callout = useTurnCallout(view.yourTurn && view.phase === "choose");
+  const closer = view.players.find((player) => player.id === view.closerId);
+  const finale = useTurnCallout(view.lastRound);
+  const turn = useTurnCallout(
+    settingsReady &&
+      settings.turnCallout &&
+      view.yourTurn &&
+      view.phase === "choose"
+  );
+  const closingLine = closer?.isYou
+    ? "Tu as tout retourné"
+    : `${closer?.name ?? "Un joueur"} a tout retourné`;
+  const callout = finale
+    ? {
+        tone: "finale" as const,
+        title: "Dernier tour",
+        detail:
+          view.yourTurn && settings.turnCallout
+            ? `${closingLine}. À toi de jouer.`
+            : closingLine,
+      }
+    : turn
+      ? { tone: "turn" as const, title: "À toi de jouer" }
+      : null;
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -371,6 +499,8 @@ function Board({
       yours={view.yourTurn}
       status={view.yourTurn ? "À toi" : `Tour de ${current?.name ?? "…"}`}
       callout={callout}
+      settings={settings}
+      onSettings={onSettings}
     >
       {others.length > 0 ? (
         <div
@@ -390,20 +520,23 @@ function Board({
         </div>
       ) : null}
       <div ref={bottomRef} className="mt-auto shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex h-14 min-w-0 flex-1 flex-col justify-center">
+        <div className="flex items-stretch gap-2">
+          <section className="flex min-w-0 flex-1 flex-col justify-center rounded-2xl bg-black/40 px-3 py-2.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]">
+            <p className="text-[10px] font-extrabold tracking-[0.14em] text-amber-100/75 uppercase">
+              Consigne
+            </p>
             <p
-              className={`line-clamp-2 text-sm leading-5 font-bold ${
+              className={`mt-1 line-clamp-2 min-h-10 text-sm leading-5 font-bold ${
                 error ? "text-rose-200" : "text-white"
               }`}
             >
               {error ?? view.hint}
             </p>
-            <p className="h-4 truncate text-[11px] text-white/50">
+            <p className="mt-1 h-4 truncate text-[11px] text-white/50">
               {view.lastEvent}
             </p>
-          </div>
-          <div className="flex shrink-0 items-end gap-1.5 pt-3 pr-1.5">
+          </section>
+          <section className="flex shrink-0 items-end gap-1.5 rounded-2xl bg-[#02150f]/80 px-2 pt-3 pb-1.5 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.5)]">
             <Pile
               title="Pioche"
               detail={String(view.deckCount)}
@@ -499,11 +632,11 @@ function Board({
                 />
               )}
             </Pile>
-          </div>
+          </section>
         </div>
         {you ? (
           <section
-            className={`mt-2 rounded-[1.6rem] px-2.5 pt-2.5 pb-3 ${
+            className={`mt-3 rounded-[1.6rem] px-2.5 pt-2.5 pb-3 ${
               view.yourTurn
                 ? "bg-black/30 shadow-[inset_0_0_0_1.5px_rgba(252,211,77,0.75)]"
                 : "bg-black/20"
@@ -684,15 +817,19 @@ function Summary({
   onAction,
   onQuit,
   busy,
+  settings,
+  onSettings,
 }: {
   view: GameView;
   onAction: (action: Action) => void;
   onQuit: () => void;
   busy: boolean;
+  settings: SkyjoSettings;
+  onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
   const ranking = [...view.players].sort((a, b) => a.total - b.total);
   return (
-    <Shell onQuit={onQuit}>
+    <Shell onQuit={onQuit} settings={settings} onSettings={onSettings}>
       <h2 className="text-center text-2xl font-extrabold">
         {view.phase === "over" ? "Partie terminée" : `Manche ${view.round}`}
       </h2>
