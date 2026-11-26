@@ -35,6 +35,7 @@ export function OnlineGame({ code }: { code: string }) {
     let stop = false;
     let timer = 0;
     let announced = false;
+    let misses = 0;
 
     async function poll() {
       const back = !announced;
@@ -42,7 +43,11 @@ export function OnlineGame({ code }: { code: string }) {
         const next = await fetchRoom(code, playerId, back);
         if (stop) return;
         announced = true;
+        misses = 0;
         setMissing(false);
+        setError((current) =>
+          current === "Aucune partie avec ce code." ? null : current
+        );
         setSnapshot((current) => {
           if (
             current?.member &&
@@ -57,8 +62,16 @@ export function OnlineGame({ code }: { code: string }) {
         if (stop) return;
         const message =
           caught instanceof Error ? caught.message : "Partie introuvable.";
-        setError(message);
-        if (message === "Aucune partie avec ce code.") setMissing(true);
+        if (message === "Aucune partie avec ce code.") {
+          misses += 1;
+          if (misses >= 3 && !snapshotRef.current) {
+            setError(message);
+            setMissing(true);
+          }
+        } else {
+          misses = 0;
+          setError(message);
+        }
       }
       if (!stop) timer = window.setTimeout(() => void poll(), 500);
     }

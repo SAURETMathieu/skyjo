@@ -3,6 +3,7 @@ import { isBotLevel, type Action, type BotLevel } from "@/lib/skyjo/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 type Body =
   | { kind: "join"; playerId?: string; name?: string }
@@ -13,74 +14,92 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ code: string }> }
 ) {
-  const { code } = await context.params;
-  const url = new URL(request.url);
-  const playerId = url.searchParams.get("playerId") ?? "";
-  const snapshot = await readRoom(
-    normalize(code),
-    playerId,
-    url.searchParams.get("back") === "1"
-  );
-  if (!snapshot) {
-    return Response.json(
-      { error: "Aucune partie avec ce code." },
-      { status: 404 }
+  try {
+    const { code } = await context.params;
+    const url = new URL(request.url);
+    const playerId = url.searchParams.get("playerId") ?? "";
+    const snapshot = await readRoom(
+      normalize(code),
+      playerId,
+      url.searchParams.get("back") === "1"
     );
+    if (!snapshot) {
+      return json({ error: "Aucune partie avec ce code." }, 404);
+    }
+    return json({ snapshot });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Partie indisponible.";
+    return json({ error: message }, 503);
   }
-  return Response.json({ snapshot });
 }
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ code: string }> }
 ) {
-  const { code } = await context.params;
-  const body = (await request.json().catch(() => null)) as Body | null;
-  const playerId = cleanId(body?.playerId);
-  if (!playerId) {
-    return Response.json({ error: "Joueur manquant." }, { status: 400 });
-  }
-
-  if (body?.kind === "join") {
-    const result = await joinRemoteRoom(
-      normalize(code),
-      playerId,
-      body.name ?? ""
-    );
-    if ("error" in result && !("snapshot" in result)) {
-      return Response.json({ error: result.error }, { status: 400 });
+  try {
+    const { code } = await context.params;
+    const body = (await request.json().catch(() => null)) as Body | null;
+    const playerId = cleanId(body?.playerId);
+    if (!playerId) {
+      return json({ error: "Joueur manquant." }, 400);
     }
-    return Response.json({ snapshot: result.snapshot });
-  }
 
-  if (body?.kind === "leave") {
-    const snapshot = await leaveRoom(normalize(code), playerId);
-    if (!snapshot) {
-      return Response.json(
-        { error: "Aucune partie avec ce code." },
-        { status: 404 }
+    if (body?.kind === "join") {
+      const result = await joinRemoteRoom(
+        normalize(code),
+        playerId,
+        body.name ?? ""
       );
+      if ("error" in result && !("snapshot" in result)) {
+        return json(
+          { error: result.error },
+          result.error === "Aucune partie avec ce code." ? 404 : 400
+        );
+      }
+      return json({ snapshot: result.snapshot });
     }
-    return Response.json({ snapshot });
-  }
 
-  if (body?.kind === "play") {
-    const action = parseAction(body.action);
-    if (!action || typeof body.revision !== "number") {
-      return Response.json({ error: "Coup invalide." }, { status: 400 });
+    if (body?.kind === "leave") {
+      const snapshot = await leaveRoom(normalize(code), playerId);
+      if (!snapshot) {
+        return json({ error: "Aucune partie avec ce code." }, 404);
+      }
+      return json({ snapshot });
     }
-    const result = await play(normalize(code), playerId, action, body.revision);
-    if ("error" in result) {
-      const snapshot = "snapshot" in result ? result.snapshot : undefined;
-      return Response.json(
-        { error: result.error, snapshot },
-        { status: snapshot ? 409 : 400 }
+
+    if (body?.kind === "play") {
+      const action = parseAction(body.action);
+      if (!action || typeof body.revision !== "number") {
+        return json({ error: "Coup invalide." }, 400);
+      }
+      const result = await play(
+        normalize(code),
+        playerId,
+        action,
+        body.revision
       );
+      if ("error" in result) {
+        const snapshot = "snapshot" in result ? result.snapshot : undefined;
+        return json({ error: result.error, snapshot }, snapshot ? 409 : 400);
+      }
+      return json({ snapshot: result.snapshot });
     }
-    return Response.json({ snapshot: result.snapshot });
-  }
 
-  return Response.json({ error: "Requête invalide." }, { status: 400 });
+    return json({ error: "Requête invalide." }, 400);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Partie indisponible.";
+    return json({ error: message }, 503);
+  }
+}
+
+function json(body: unknown, status = 200) {
+  return Response.json(body, {
+    status,
+    headers: { "cache-control": "private, no-store, max-age=0" },
+  });
 }
 
 function readLevel(value: unknown): BotLevel {

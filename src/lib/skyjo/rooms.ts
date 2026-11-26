@@ -31,7 +31,7 @@ const queues = (store.__skyjoQueues ??= new Map<string, Promise<void>>());
 export function createRemoteRoom(playerId: string, name: string) {
   return withLock("create", async () => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const code = await makeCode();
+      const code = randomCode();
       const room = createRoom({ code, hostId: playerId, hostName: name });
       const created = await save(
         code,
@@ -186,15 +186,12 @@ function snapshot(entry: Entry, playerId: string): RoomSnapshot {
   return { member: true, view };
 }
 
-async function makeCode() {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    let code = "";
-    for (let index = 0; index < 4; index += 1) {
-      code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
-    }
-    if (!(await load(code))) return code;
+function randomCode() {
+  let code = "";
+  for (let index = 0; index < 4; index += 1) {
+    code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
   }
-  throw new Error("Impossible de créer un code.");
+  return code;
 }
 
 function database() {
@@ -202,9 +199,19 @@ function database() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
-  if (!url || !key) return null;
+  if (!url || !key) {
+    if (process.env.VERCEL) {
+      throw new Error(
+        "Le stockage des parties n'est pas configuré sur le serveur."
+      );
+    }
+    return null;
+  }
   store.__skyjoSupabase = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+    },
   });
   return store.__skyjoSupabase;
 }
@@ -214,47 +221,77 @@ function ensureBucket(client: SupabaseClient) {
     .createBucket(BUCKET, { public: false })
     .then(({ error }) => {
       if (!error) return;
-      const status = "statusCode" in error ? String(error.statusCode) : "";
-      if (status === "409" || /already exists/i.test(error.message)) return;
+      const status = Number(error.status ?? error.statusCode);
+      const already =
+        status === 409 ||
+        ("code" in error && error.code === "ResourceAlreadyExists") ||
+        /already exists|duplicate/i.test(error.message);
+      if (already) return;
       store.__skyjoBucket = undefined;
       throw new Error(error.message);
     });
   return store.__skyjoBucket;
 }
 
+function isMissingObject(error: {
+  message: string;
+  status?: number;
+  statusCode?: string;
+  code?: string;
+}) {
+  if (error.code === "NoSuchBucket" || /bucket/i.test(error.message)) {
+    return false;
+  }
+  if (error.code === "NoSuchKey") return true;
+  const status = Number(error.status ?? error.statusCode);
+  if (status === 404) return true;
+  return /object not found/i.test(error.message);
+}
+
 async function load(code: string) {
   const client = database();
-  if (!client) {
-    const entry = memory.get(code);
-    if (!entry) return null;
-    entry.seen ??= {};
-    entry.left ??= [];
-    if (Date.now() - entry.createdAt > ROOM_TTL) {
-      memory.delete(code);
-      return null;
-    }
-    return entry;
-  }
+  if (!client) return loadMemory(code);
+  const found = await readStored(client, code);
+  if (found) return found;
+  await delay(200);
+  return readStored(client, code);
+}
 
+function loadMemory(code: string) {
+  const entry = memory.get(code);
+  if (!entry) return null;
+  entry.seen ??= {};
+  entry.left ??= [];
+  if (Date.now() - entry.createdAt > ROOM_TTL) {
+    memory.delete(code);
+    return null;
+  }
+  return entry;
+}
+
+async function readStored(client: SupabaseClient, code: string) {
   await ensureBucket(client);
   const { data, error } = await client.storage
     .from(BUCKET)
-    .download(`${code}.json`);
+    .download(
+      `${code}.json`,
+      { cacheNonce: String(Date.now()) },
+      { cache: "no-store" }
+    );
   if (error || !data) {
-    const status =
-      error && "statusCode" in error ? String(error.statusCode) : "";
-    if (
-      !error ||
-      status === "404" ||
-      /not found|not_found/i.test(error.message)
-    ) {
-      return null;
-    }
-    throw new Error(error.message);
+    if (error && isMissingObject(error)) return null;
+    throw new Error(error?.message ?? "Lecture de la partie impossible.");
   }
 
-  const raw = JSON.parse(await data.text()) as Partial<Entry>;
-  if (!raw.room || typeof raw.createdAt !== "number") return null;
+  let raw: Partial<Entry>;
+  try {
+    raw = JSON.parse(await data.text()) as Partial<Entry>;
+  } catch {
+    throw new Error("Partie illisible.");
+  }
+  if (!raw.room || typeof raw.createdAt !== "number") {
+    throw new Error("Partie illisible.");
+  }
   if (Date.now() - raw.createdAt > ROOM_TTL) {
     await client.storage.from(BUCKET).remove([`${code}.json`]);
     return null;
@@ -268,6 +305,10 @@ async function load(code: string) {
   };
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function save(code: string, entry: Entry, fresh = false) {
   const client = database();
   if (!client) {
@@ -277,14 +318,23 @@ async function save(code: string, entry: Entry, fresh = false) {
   }
 
   await ensureBucket(client);
+  const body = new Blob([JSON.stringify(entry)], {
+    type: "application/json",
+  });
   const { error } = await client.storage
     .from(BUCKET)
-    .upload(`${code}.json`, Buffer.from(JSON.stringify(entry)), {
+    .upload(`${code}.json`, body, {
       upsert: !fresh,
       contentType: "application/json",
+      cacheControl: "0",
     });
   if (!error) return true;
-  if (fresh && /already exists|duplicate/i.test(error.message)) return false;
+  const status = Number(error.status ?? error.statusCode);
+  const already =
+    status === 409 ||
+    ("code" in error && error.code === "ResourceAlreadyExists") ||
+    /already exists|duplicate/i.test(error.message);
+  if (fresh && already) return false;
   throw new Error(error.message);
 }
 
