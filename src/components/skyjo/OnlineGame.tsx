@@ -48,12 +48,11 @@ export function OnlineGame({ code }: { code: string }) {
           return next;
         });
       } catch (caught) {
-        if (!stop) {
-          setMissing(true);
-          setError(
-            caught instanceof Error ? caught.message : "Partie introuvable."
-          );
-        }
+        if (stop) return;
+        const message =
+          caught instanceof Error ? caught.message : "Partie introuvable.";
+        setError(message);
+        if (message === "Aucune partie avec ce code.") setMissing(true);
       }
       if (!stop) timer = window.setTimeout(() => void poll(), 500);
     }
@@ -127,8 +126,11 @@ export function OnlineGame({ code }: { code: string }) {
 
   if (!snapshot) {
     return (
-      <main className="grid min-h-dvh place-items-center text-white">
-        Connexion…
+      <main className="grid min-h-dvh place-items-center px-6 text-center text-white">
+        <div>
+          <p>Connexion…</p>
+          {error ? <p className="mt-2 text-sm text-rose-200">{error}</p> : null}
+        </div>
       </main>
     );
   }
