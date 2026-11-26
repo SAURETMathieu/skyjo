@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { CARD_STYLE } from "@/lib/skyjo/cards";
 
-export function CardFace({
+export const CardFace = memo(function CardFace({
   value,
   faceUp,
   empty = false,
@@ -28,6 +28,8 @@ export function CardFace({
   label: string;
 }) {
   const revealed = useRef(faceUp);
+  const clickRef = useRef(onClick);
+  clickRef.current = onClick;
   const [flipping, setFlipping] = useState(false);
 
   useEffect(() => {
@@ -81,24 +83,69 @@ export function CardFace({
     </span>
   );
 
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        aria-label={label}
-        onClick={(event) => onClick?.(event.currentTarget)}
-        disabled={!interactive}
-        className={className}
-        style={style}
-      >
-        {body}
-      </button>
-    );
-  }
-
   return (
-    <div role="img" aria-label={label} className={className} style={style}>
+    <div
+      role={interactive ? "button" : "img"}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={label}
+      onClick={
+        interactive
+          ? (event) => clickRef.current?.(event.currentTarget)
+          : undefined
+      }
+      onKeyDown={
+        interactive
+          ? (event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              clickRef.current?.(event.currentTarget);
+            }
+          : undefined
+      }
+      className={className}
+      style={style}
+    >
       {body}
     </div>
+  );
+}, sameCard);
+
+function sameCard(
+  prev: {
+    value: number | null;
+    faceUp: boolean;
+    empty?: boolean;
+    size?: "sm" | "md";
+    interactive?: boolean;
+    indices?: boolean;
+    highlight?: boolean;
+    framed?: boolean;
+    settle?: boolean;
+    label: string;
+  },
+  next: {
+    value: number | null;
+    faceUp: boolean;
+    empty?: boolean;
+    size?: "sm" | "md";
+    interactive?: boolean;
+    indices?: boolean;
+    highlight?: boolean;
+    framed?: boolean;
+    settle?: boolean;
+    label: string;
+  }
+) {
+  return (
+    prev.value === next.value &&
+    prev.faceUp === next.faceUp &&
+    prev.empty === next.empty &&
+    prev.size === next.size &&
+    prev.interactive === next.interactive &&
+    prev.indices === next.indices &&
+    prev.highlight === next.highlight &&
+    prev.framed === next.framed &&
+    prev.settle === next.settle &&
+    prev.label === next.label
   );
 }

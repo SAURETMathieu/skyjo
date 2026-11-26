@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getPlayerId, getSavedName, saveName } from "@/lib/skyjo/identity";
@@ -47,7 +47,16 @@ export function OnlineGame({ code }: { code: string }) {
     const channel = supabase
       ? supabase
           .channel(`skyjo:${code}`)
-          .on("broadcast", { event: "updated" }, () => {
+          .on("broadcast", { event: "updated" }, (message) => {
+            const revision = revisionOf(message.payload);
+            const current = snapshotRef.current;
+            if (
+              current?.member &&
+              revision !== null &&
+              revision <= current.view.revision
+            ) {
+              return;
+            }
             void pull();
           })
           .subscribe((status) => {
@@ -75,23 +84,10 @@ export function OnlineGame({ code }: { code: string }) {
             setError((current) =>
               current === "Aucune partie avec ce code." ? null : current
             );
-            const current = snapshotRef.current;
-            if (!(
-              current?.member &&
-              next.member &&
-              next.view.revision < current.view.revision
-            )) {
-              snapshotRef.current = next;
-            }
             setSnapshot((shown) => {
-              if (
-                shown?.member &&
-                next.member &&
-                next.view.revision < shown.view.revision
-              ) {
-                return shown;
-              }
-              return next;
+              const kept = keepSnapshot(shown, next);
+              snapshotRef.current = kept;
+              return kept;
             });
           } catch (caught) {
             if (stop) return;
@@ -123,9 +119,9 @@ export function OnlineGame({ code }: { code: string }) {
             : current.view.players.some(
                 (player) => player.isBot && player.current
               );
-        if (bot) return 1000;
+        if (bot) return 500;
       }
-      return live ? 3000 : 1000;
+      return live ? 2000 : 700;
     }
 
     async function tick() {
@@ -142,32 +138,51 @@ export function OnlineGame({ code }: { code: string }) {
     };
   }, [code, playerId]);
 
-  async function act(action: Action): Promise<GameView | null> {
-    const current = snapshotRef.current;
-    if (!current?.member) return null;
-    setBusy(true);
-    try {
-      const next = await sendAction(
-        code,
-        playerId,
-        action,
-        current.view.revision
-      );
-      snapshotRef.current = next;
-      setSnapshot(next);
-      setError(null);
-      return next.member ? next.view : null;
-    } catch (caught) {
-      if (isSnapshotError(caught) && caught.snapshot) {
-        snapshotRef.current = caught.snapshot;
-        setSnapshot(caught.snapshot);
+  const pending = useRef(false);
+  const act = useCallback(
+    async (action: Action): Promise<GameView | null> => {
+      if (pending.current) return null;
+      const current = snapshotRef.current;
+      if (!current?.member) return null;
+      pending.current = true;
+      try {
+        const next = await sendAction(
+          code,
+          playerId,
+          action,
+          current.view.revision
+        );
+        let view: GameView | null = null;
+        setSnapshot((shown) => {
+          const kept = keepSnapshot(shown, next);
+          snapshotRef.current = kept;
+          view = kept.member ? kept.view : null;
+          return kept;
+        });
+        setError((existing) => (existing === null ? existing : null));
+        return view;
+      } catch (caught) {
+        if (isSnapshotError(caught) && caught.snapshot) {
+          const failed = caught.snapshot;
+          setSnapshot((shown) => {
+            const kept = keepSnapshot(shown, failed);
+            snapshotRef.current = kept;
+            return kept;
+          });
+        }
+        setError(caught instanceof Error ? caught.message : "Coup refusé.");
+        return null;
+      } finally {
+        pending.current = false;
       }
-      setError(caught instanceof Error ? caught.message : "Coup refusé.");
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  }
+    },
+    [code, playerId]
+  );
+  const quit = useCallback(() => {
+    void leaveRemoteRoom(code, playerId)
+      .catch(() => undefined)
+      .finally(() => router.push("/"));
+  }, [code, playerId, router]);
 
   async function join() {
     const trimmed = name.trim();
@@ -278,13 +293,89 @@ export function OnlineGame({ code }: { code: string }) {
     <GameScreen
       view={snapshot.view}
       onAction={act}
-      onQuit={() => {
-        void leaveRemoteRoom(code, playerId)
-          .catch(() => undefined)
-          .finally(() => router.push("/"));
-      }}
+      onQuit={quit}
       busy={busy}
       error={error}
     />
   );
+}
+
+function revisionOf(payload: unknown) {
+  if (!payload || typeof payload !== "object" || !("revision" in payload)) {
+    return null;
+  }
+  const revision = payload.revision;
+  return typeof revision === "number" ? revision : null;
+}
+
+function keepSnapshot(shown: RoomSnapshot | null, next: RoomSnapshot) {
+  if (!shown) return next;
+  if (shown.member && next.member) {
+    if (next.view.revision < shown.view.revision) return shown;
+    if (
+      next.view.revision === shown.view.revision &&
+      viewKey(shown.view) === viewKey(next.view)
+    ) {
+      return shown;
+    }
+    return next;
+  }
+  if (!shown.member && !next.member && lobbyKey(shown) === lobbyKey(next)) {
+    return shown;
+  }
+  return next;
+}
+
+function lobbyKey(snapshot: Extract<RoomSnapshot, { member: false }>) {
+  return `${snapshot.phase}:${snapshot.hostId}:${snapshot.players
+    .map((player) => `${player.id}:${player.name}:${player.isBot ? 1 : 0}`)
+    .join(",")}`;
+}
+
+function viewKey(view: GameView) {
+  let players = "";
+  for (const player of view.players) {
+    players += `${player.id}:${player.connected ? 1 : 0}:${player.left ? 1 : 0}:${player.current ? 1 : 0}:${player.total}:${player.visible}:${player.hidden}:`;
+    for (const cell of player.grid) {
+      players += cell.empty ? "e" : cell.faceUp ? `u${cell.value ?? ""}` : "d";
+      players += ",";
+    }
+    players += ";";
+  }
+  const actions = view.actions;
+  return [
+    view.phase,
+    view.round,
+    view.yourTurn ? 1 : 0,
+    view.lastRound ? 1 : 0,
+    view.deckCount,
+    view.discardTop ?? "",
+    view.hand ?? "",
+    view.opponentHand ?? "",
+    view.opponentHolding ? 1 : 0,
+    view.holdFromDeck ? 1 : 0,
+    view.currentPlayerId ?? "",
+    view.closerId ?? "",
+    view.hint,
+    view.lastEvent,
+    view.flipsNeeded,
+    actions.flip ? 1 : 0,
+    actions.draw ? 1 : 0,
+    actions.takeDiscard ? 1 : 0,
+    actions.swap ? 1 : 0,
+    actions.discardDrawn ? 1 : 0,
+    actions.nextRound ? 1 : 0,
+    actions.start ? 1 : 0,
+    actions.addBot ? 1 : 0,
+    view.winners.join(","),
+    view.summary
+      ?.map(
+        (score) => `${score.playerId}:${score.points}:${score.doubled ? 1 : 0}`
+      )
+      .join(",") ?? "",
+    (view.uncovered ?? [])
+      .map((card) => `${card.playerId}:${card.index}:${card.value}`)
+      .join(","),
+    players,
+  ].join("|");
 }

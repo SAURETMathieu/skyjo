@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
+import { stepBot } from "@/lib/skyjo/bots";
 import { MIN_PLAYERS } from "@/lib/skyjo/cards";
 import {
   applyAction,
@@ -15,7 +15,8 @@ import type { Action, Room, RoomSnapshot } from "@/lib/skyjo/types";
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_TTL = 1000 * 60 * 60 * 8;
 const FRESH_MS = 5000;
-const SEEN_WRITE_MS = 1000;
+const SEEN_WRITE_MS = 3000;
+const ONLINE_BOT_BEAT_MS = 450;
 const REJOIN_MS = 2 * 60 * 1000;
 const BUCKET = "skyjo-rooms";
 const TABLE = "skyjo_rooms";
@@ -207,7 +208,7 @@ export function play(
 
 function advance(entry: Entry) {
   const now = Date.now();
-  if (now - entry.lastBot < BOT_BEAT_MS) return false;
+  if (now - entry.lastBot < ONLINE_BOT_BEAT_MS) return false;
   const next = stepBot(entry.room);
   if (next === entry.room) return false;
   entry.room = next;

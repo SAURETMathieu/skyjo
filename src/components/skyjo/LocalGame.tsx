@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { BOT_BEAT_MS, stepBot } from "@/lib/skyjo/bots";
@@ -66,17 +66,13 @@ export function LocalGame({
     return () => window.clearTimeout(timer);
   }, [preview, room]);
 
-  if (!room) {
-    return (
-      <main className="grid min-h-dvh place-items-center text-white">
-        Préparation…
-      </main>
-    );
-  }
-
-  const youId = room.players.find((player) => !player.isBot)?.id ?? room.hostId;
-
-  function act(action: Action): GameView | null {
+  const youId =
+    room?.players.find((player) => !player.isBot)?.id ?? room?.hostId ?? "";
+  const view = useMemo(
+    () => (room ? project(room, youId) : null),
+    [room, youId]
+  );
+  const act = useCallback((action: Action): GameView | null => {
     const current = roomRef.current;
     if (!current) return null;
     const playerId =
@@ -86,23 +82,25 @@ export function LocalGame({
       setError(step.error ?? "Coup impossible.");
       return null;
     }
-    setError(null);
+    setError((existing) => (existing === null ? existing : null));
     roomRef.current = step.state;
     setRoom(step.state);
     return project(step.state, playerId);
+  }, []);
+  const quit = useCallback(() => {
+    if (!preview) sessionStorage.removeItem(LOCAL_KEY);
+    router.push("/");
+  }, [preview, router]);
+
+  if (!room || !view) {
+    return (
+      <main className="grid min-h-dvh place-items-center text-white">
+        Préparation…
+      </main>
+    );
   }
 
-  return (
-    <GameScreen
-      view={project(room, youId)}
-      onAction={act}
-      error={error}
-      onQuit={() => {
-        if (!preview) sessionStorage.removeItem(LOCAL_KEY);
-        router.push("/");
-      }}
-    />
-  );
+  return <GameScreen view={view} onAction={act} error={error} onQuit={quit} />;
 }
 
 function previewRoom(name: string, preview: "manche" | "partie"): Room {

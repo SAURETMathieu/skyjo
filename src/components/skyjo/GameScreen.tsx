@@ -3,8 +3,11 @@
 import {
   cloneElement,
   isValidElement,
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactElement,
@@ -41,7 +44,7 @@ type PlayAction = (
   action: Action
 ) => GameView | null | Promise<GameView | null>;
 
-export function GameScreen({
+export const GameScreen = memo(function GameScreen({
   view,
   onAction,
   onQuit,
@@ -119,7 +122,7 @@ export function GameScreen({
       onSettings={update}
     />
   );
-}
+});
 
 function useTurnCallout(active: boolean, duration = 1600) {
   const [visible, setVisible] = useState(false);
@@ -536,8 +539,14 @@ function Board({
   settingsReady: boolean;
   onSettings: (patch: Partial<SkyjoSettings>) => void;
 }) {
-  const you = view.players.find((player) => player.isYou);
-  const others = view.players.filter((player) => !player.isYou);
+  const you = useMemo(
+    () => view.players.find((player) => player.isYou),
+    [view.players]
+  );
+  const others = useMemo(
+    () => view.players.filter((player) => !player.isYou),
+    [view.players]
+  );
   const presenceKey = others
     .map((player) => `${player.id}:${player.connected}:${player.left}`)
     .join("|");
@@ -556,12 +565,28 @@ function Board({
   const blockClick = useRef(false);
   const stopListeners = useRef<(() => void) | null>(null);
   const flightSeq = useRef(0);
+  const sending = useRef(false);
   const viewRef = useRef(view);
   const onActionRef = useRef(onAction);
   const busyRef = useRef(busy);
   viewRef.current = view;
   onActionRef.current = onAction;
   busyRef.current = busy;
+  const placeRef = useRef<(index: number, element: HTMLElement) => void>(
+    () => {}
+  );
+  const playAt = useCallback((index: number, element: HTMLElement) => {
+    if (viewRef.current.actions.swap) {
+      placeRef.current(index, element);
+      return;
+    }
+    if (busyRef.current || sending.current) return;
+    sending.current = true;
+    const result = onActionRef.current({ type: "flip", index });
+    void Promise.resolve(result).finally(() => {
+      sending.current = false;
+    });
+  }, []);
   const [rows, setRows] = useState(1);
   const [flights, setFlights] = useState<Flight[]>([]);
   const [covered, setCovered] = useState<CoveredCell | null>(null);
@@ -634,7 +659,7 @@ function Board({
     observer.observe(frame);
     observer.observe(bottom);
     return () => observer.disconnect();
-  }, [others.length, view.revision, presenceKey]);
+  }, [others.length, presenceKey]);
 
   useEffect(() => () => stopListeners.current?.(), []);
 
@@ -645,10 +670,15 @@ function Board({
   }
 
   function placeCard(index: number, target: HTMLElement) {
-    const value = view.hand;
+    if (busyRef.current || sending.current) return;
+    const value = viewRef.current.hand;
     const source = document.querySelector("[data-skyjo-held]");
     if (value === null || !source) {
-      void resolveAction(onAction({ type: "swap", index }));
+      sending.current = true;
+      const result = onActionRef.current({ type: "swap", index });
+      void Promise.resolve(result).finally(() => {
+        sending.current = false;
+      });
       return;
     }
     const finish = launchCard(
@@ -657,11 +687,16 @@ function Board({
       source.getBoundingClientRect(),
       target.getBoundingClientRect()
     );
-    const result = onAction({ type: "swap", index });
+    sending.current = true;
+    const result = onActionRef.current({ type: "swap", index });
+    void Promise.resolve(result).finally(() => {
+      sending.current = false;
+    });
     if (result instanceof Promise)
       void result.then((next) => finish(next != null));
     else finish(result != null);
   }
+  placeRef.current = placeCard;
 
   function launchCard(index: number | null, value: number, from: Box, to: Box) {
     const reduce = window.matchMedia(
@@ -735,7 +770,7 @@ function Board({
     )) {
       const index = Number(node.getAttribute("data-skyjo-cell"));
       if (!occupied(index)) continue;
-      const card = node.querySelector("button, [role='img']");
+      const card = node.querySelector("[role='button'], [role='img']");
       if (!(card instanceof HTMLElement)) continue;
       const box = card.getBoundingClientRect();
       const pad = 10;
@@ -776,7 +811,7 @@ function Board({
 
   function cellBox(index: number) {
     const slot = document.querySelector(`[data-skyjo-cell="${index}"]`);
-    const card = slot?.querySelector("button, [role='img']");
+    const card = slot?.querySelector("[role='button'], [role='img']");
     return card instanceof HTMLElement ? card.getBoundingClientRect() : null;
   }
 
@@ -810,7 +845,13 @@ function Board({
     source: DragSource,
     event: ReactPointerEvent<HTMLElement>
   ) {
-    if (event.button !== 0 || busyRef.current || dragRef.current) return;
+    if (
+      event.button !== 0 ||
+      busyRef.current ||
+      sending.current ||
+      dragRef.current
+    )
+      return;
     const current = viewRef.current;
     if (source === "deck" && (!current.actions.draw || current.hand !== null)) {
       return;
@@ -913,10 +954,19 @@ function Board({
         pointer.clientX - origin.startX,
         pointer.clientY - origin.startY
       ) > 8;
-    if (!moved || cancelled) {
+    if (!moved || cancelled || sending.current) {
       clearDrag();
       return;
     }
+    sending.current = true;
+    try {
+      await finishDrop(pointer, origin);
+    } finally {
+      sending.current = false;
+    }
+  }
+
+  async function finishDrop(pointer: PointerEvent, origin: CardDrag) {
     const overCell = cellAt(pointer.clientX, pointer.clientY);
     const canDiscard = origin.source === "deck" || origin.source === "drawn";
     const overDiscard =
@@ -1001,12 +1051,24 @@ function Board({
     finish(swapped != null);
   }
 
-  function guarded(action: () => void) {
+  function guarded(
+    action: () => GameView | null | Promise<GameView | null> | void
+  ) {
     if (blockClick.current) {
       blockClick.current = false;
       return;
     }
-    action();
+    if (busyRef.current || sending.current) return;
+    sending.current = true;
+    try {
+      const result = action();
+      void Promise.resolve(result ?? null).finally(() => {
+        sending.current = false;
+      });
+    } catch (error) {
+      sending.current = false;
+      throw error;
+    }
   }
 
   return (
@@ -1084,7 +1146,6 @@ function Board({
               heldDrag={
                 view.hand !== null &&
                 view.holdFromDeck &&
-                !busy &&
                 (view.actions.swap || view.actions.discardDrawn)
                   ? {
                       onPointerDown: (event) => startDrag("drawn", event),
@@ -1092,11 +1153,11 @@ function Board({
                   : undefined
               }
               onPointerDown={
-                view.actions.draw && view.hand === null && !busy
+                view.actions.draw && view.hand === null
                   ? (event) => startDrag("deck", event)
                   : undefined
               }
-              enabled={view.actions.draw && !busy}
+              enabled={view.actions.draw}
               onClick={() => guarded(() => onAction({ type: "draw" }))}
               label={
                 view.actions.draw
@@ -1116,8 +1177,10 @@ function Board({
                   type="button"
                   data-skyjo-discard-drop
                   aria-label="Défausser la carte piochée"
-                  disabled={!view.actions.discardDrawn || busy}
-                  onClick={() => onAction({ type: "discard-drawn" })}
+                  disabled={!view.actions.discardDrawn}
+                  onClick={() =>
+                    guarded(() => onAction({ type: "discard-drawn" }))
+                  }
                   className={`grid size-8 place-items-center rounded-full bg-amber-300 text-[#1a1405] shadow-md ${
                     view.actions.discardDrawn
                       ? "skyjo-arrow"
@@ -1160,21 +1223,18 @@ function Board({
               heldHidden={drag?.moved === true && drag.source === "taken"}
               heldLabel="Glisser la carte prise sur ton jeu"
               heldDrag={
-                view.hand !== null &&
-                !view.holdFromDeck &&
-                view.actions.swap &&
-                !busy
+                view.hand !== null && !view.holdFromDeck && view.actions.swap
                   ? {
                       onPointerDown: (event) => startDrag("taken", event),
                     }
                   : undefined
               }
               onPointerDown={
-                view.actions.takeDiscard && !busy
+                view.actions.takeDiscard
                   ? (event) => startDrag("discard", event)
                   : undefined
               }
-              enabled={view.actions.takeDiscard && !busy}
+              enabled={view.actions.takeDiscard}
               onClick={() => guarded(() => onAction({ type: "take-discard" }))}
               label={
                 view.actions.takeDiscard
@@ -1235,42 +1295,16 @@ function Board({
                   view.actions.swap && !cell.empty && covered === null;
                 const canFlip =
                   view.actions.flip && !cell.empty && !cell.faceUp;
-                const column = (index % 4) + 1;
-                const row = Math.floor(index / 4) + 1;
                 return (
-                  <div
+                  <PlayCard
                     key={`${you.id}-${index}`}
-                    data-skyjo-cell={index}
-                    className="contents"
-                  >
-                    <CardFace
-                      value={shown.value}
-                      faceUp={shown.faceUp}
-                      empty={shown.empty}
-                      indices
-                      framed
-                      settle={settled === index}
-                      highlight={
-                        drag?.moved === true && drag.overCell === index
-                      }
-                      interactive={canSwap || canFlip}
-                      onClick={
-                        canSwap || canFlip
-                          ? (element) => {
-                              if (canSwap) placeCard(index, element);
-                              else onAction({ type: "flip", index });
-                            }
-                          : undefined
-                      }
-                      label={
-                        shown.empty
-                          ? `Colonne ${column}, ligne ${row}, vide`
-                          : shown.faceUp
-                            ? `Colonne ${column}, ligne ${row}, ${shown.value}`
-                            : `Colonne ${column}, ligne ${row}, cachée`
-                      }
-                    />
-                  </div>
+                    cell={shown}
+                    index={index}
+                    interactive={canSwap || canFlip}
+                    highlight={drag?.moved === true && drag.overCell === index}
+                    settle={settled === index}
+                    onPlay={playAt}
+                  />
                 );
               })}
             </div>
@@ -1402,7 +1436,81 @@ function PresenceNote({
   );
 }
 
-function Opponent({
+const PlayCard = memo(function PlayCard({
+  cell,
+  index,
+  interactive,
+  highlight,
+  settle,
+  onPlay,
+}: {
+  cell: ViewCell;
+  index: number;
+  interactive: boolean;
+  highlight: boolean;
+  settle: boolean;
+  onPlay: (index: number, element: HTMLElement) => void;
+}) {
+  const column = (index % 4) + 1;
+  const row = Math.floor(index / 4) + 1;
+  return (
+    <div data-skyjo-cell={index} className="contents">
+      <CardFace
+        value={cell.value}
+        faceUp={cell.faceUp}
+        empty={cell.empty}
+        indices
+        framed
+        settle={settle}
+        highlight={highlight}
+        interactive={interactive}
+        onClick={interactive ? (element) => onPlay(index, element) : undefined}
+        label={
+          cell.empty
+            ? `Colonne ${column}, ligne ${row}, vide`
+            : cell.faceUp
+              ? `Colonne ${column}, ligne ${row}, ${cell.value}`
+              : `Colonne ${column}, ligne ${row}, cachée`
+        }
+      />
+    </div>
+  );
+}, samePlayCard);
+
+function samePlayCard(
+  prev: {
+    cell: ViewCell;
+    index: number;
+    interactive: boolean;
+    highlight: boolean;
+    settle: boolean;
+  },
+  next: {
+    cell: ViewCell;
+    index: number;
+    interactive: boolean;
+    highlight: boolean;
+    settle: boolean;
+  }
+) {
+  return (
+    prev.index === next.index &&
+    prev.interactive === next.interactive &&
+    prev.highlight === next.highlight &&
+    prev.settle === next.settle &&
+    sameCell(prev.cell, next.cell)
+  );
+}
+
+function sameCell(prev: ViewCell, next: ViewCell) {
+  return (
+    prev.empty === next.empty &&
+    prev.faceUp === next.faceUp &&
+    prev.value === next.value
+  );
+}
+
+const Opponent = memo(function Opponent({
   player,
   active,
   quiet,
@@ -1464,6 +1572,34 @@ function Opponent({
       </div>
     </article>
   );
+}, sameOpponent);
+
+function sameOpponent(
+  prev: { player: ViewPlayer; active: boolean; quiet: boolean },
+  next: { player: ViewPlayer; active: boolean; quiet: boolean }
+) {
+  return (
+    prev.active === next.active &&
+    prev.quiet === next.quiet &&
+    prev.player.id === next.player.id &&
+    prev.player.name === next.player.name &&
+    prev.player.connected === next.player.connected &&
+    prev.player.left === next.player.left &&
+    prev.player.total === next.player.total &&
+    prev.player.visible === next.player.visible &&
+    prev.player.current === next.player.current &&
+    sameGrid(prev.player.grid, next.player.grid)
+  );
+}
+
+function sameGrid(prev: ViewCell[], next: ViewCell[]) {
+  if (prev.length !== next.length) return false;
+  for (let index = 0; index < prev.length; index += 1) {
+    const left = prev[index];
+    const right = next[index];
+    if (!left || !right || !sameCell(left, right)) return false;
+  }
+  return true;
 }
 
 function Pile({
