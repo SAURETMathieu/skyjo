@@ -14,6 +14,7 @@ import type {
   GameView,
   Phase,
   Player,
+  RevealCard,
   Room,
   RoundScore,
   Slot,
@@ -425,8 +426,9 @@ function flipCard(room: Room, playerId: string, index: number) {
     return "Ce n'est pas ton tour.";
   slot.faceUp = true;
   say(room, `${player.name} retourne un ${slot.value}`);
+  const shown = { playerId: player.id, index, value: slot.value };
   clearColumns(room, player);
-  finishTurn(room, player);
+  finishTurn(room, player, shown);
   return null;
 }
 
@@ -499,8 +501,9 @@ function swapCard(room: Room, playerId: string, index: number) {
     room,
     `${player.name} pose un ${placed.value} à la place d'un ${previous.value}`
   );
+  const shown = { playerId: player.id, index, value: placed.value };
   clearColumns(room, player);
-  finishTurn(room, player);
+  finishTurn(room, player, shown);
   return null;
 }
 
@@ -513,14 +516,14 @@ function finishOpening(room: Room) {
   if (starter) say(room, `${starter.name} commence`);
 }
 
-function finishTurn(room: Room, player: Player) {
+function finishTurn(room: Room, player: Player, shown?: RevealCard) {
   if (!room.lastRound && allFaceUp(player)) {
     room.closerId = player.id;
     room.pending = othersAfter(room, player.id);
     room.lastRound = true;
     say(room, `${player.name} termine la manche`);
     if (room.pending.length === 0) {
-      endRound(room);
+      endRound(room, shown);
       return;
     }
     room.current = indexOf(room, room.pending[0] ?? player.id);
@@ -531,7 +534,7 @@ function finishTurn(room: Room, player: Player) {
   if (room.lastRound) {
     room.pending = room.pending.filter((id) => id !== player.id);
     if (room.pending.length === 0) {
-      endRound(room);
+      endRound(room, shown);
       return;
     }
     room.current = indexOf(room, room.pending[0] ?? player.id);
@@ -543,13 +546,18 @@ function finishTurn(room: Room, player: Player) {
   room.phase = { kind: "choose" };
 }
 
-function endRound(room: Room) {
-  const uncovered: { playerId: string; index: number; value: number }[] = [];
+function endRound(room: Room, shown?: RevealCard) {
+  const uncovered: RevealCard[] = [];
   for (const player of revealPlayers(room)) {
-    player.grid.forEach((slot, index) => {
-      if (!slot || slot.faceUp) return;
+    for (let index = 0; index < GRID_SIZE; index += 1) {
+      if (shown && shown.playerId === player.id && shown.index === index) {
+        uncovered.push(shown);
+        continue;
+      }
+      const slot = player.grid[index];
+      if (!slot || slot.faceUp) continue;
       uncovered.push({ playerId: player.id, index, value: slot.value });
-    });
+    }
   }
   room.uncovered = uncovered;
   for (const player of room.players) {

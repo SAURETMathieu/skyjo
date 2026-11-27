@@ -12,7 +12,7 @@ export type SkyjoSettings = {
 };
 
 const defaults: SkyjoSettings = {
-  turnCallout: true,
+  turnCallout: false,
   botLevel: "normal",
 };
 
@@ -27,7 +27,7 @@ export function loadSettings(): SkyjoSettings {
     if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<SkyjoSettings>;
     return {
-      turnCallout: parsed.turnCallout !== false,
+      turnCallout: parsed.turnCallout === true,
       botLevel: readLevel(parsed.botLevel),
     };
   } catch {

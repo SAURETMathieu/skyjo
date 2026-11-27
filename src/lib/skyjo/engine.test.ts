@@ -308,7 +308,7 @@ test("une colonne révélée au décompte ne compte pas", () => {
   assert.equal(ended.state.players[0]?.grid[0], null);
   assert.deepEqual(
     ended.state.uncovered.map((card) => `${card.playerId}:${card.index}`),
-    ["b:11", `${host}:4`, `${host}:8`]
+    ["b:11", `${host}:0`, `${host}:4`, `${host}:8`]
   );
 });
 
@@ -334,7 +334,7 @@ test("les cartes cachées se retournent joueur par joueur", () => {
   );
   assert.deepEqual(
     ended.state.uncovered.map((card) => `${card.playerId}:${card.index}`),
-    ["b:0", "b:3", "c:2"]
+    ["b:0", "b:3", "c:2", "c:11"]
   );
 });
 

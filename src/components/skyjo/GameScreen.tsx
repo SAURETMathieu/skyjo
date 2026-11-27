@@ -2585,7 +2585,7 @@ function RoundReveal({
   onRefresh: () => void | Promise<void>;
   onDone: () => void;
 }) {
-  const steps = view.uncovered ?? [];
+  const steps = useMemo(() => revealSteps(previous, view), [previous, view]);
   const [tick, setTick] = useState(0);
   const done = useRef(onDone);
   done.current = onDone;
@@ -2594,6 +2594,11 @@ function RoundReveal({
   const grids = gridsAfter(previous.players, steps, flipped, cleared);
   const active = steps[Math.min(flipped, steps.length - 1)];
   const player = view.players.find((entry) => entry.id === active?.playerId);
+  const before = previous.players.find(
+    (entry) => entry.id === active?.playerId
+  );
+  const grid = active ? grids.get(active.playerId) : undefined;
+  const running = grid ? visibleScore(grid) : 0;
   const mine = steps.filter((step) => step.playerId === active?.playerId);
   const shown = mine.filter((step) =>
     steps.slice(0, flipped).some((doneStep) => doneStep === step)
@@ -2628,6 +2633,28 @@ function RoundReveal({
         <p className="text-center text-2xl font-extrabold" aria-live="polite">
           {player?.name ?? ""}
         </p>
+        {player ? (
+          <div className="pt-3">
+            <div className="flex items-center rounded-full bg-black/40 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]">
+              <p className="px-3 py-1.5 text-base leading-none font-bold tabular-nums">
+                <RoundScore
+                  key={player.id}
+                  value={running}
+                  label={`Score visible ${running}`}
+                  idleClass="text-white/70"
+                  popClass="text-sm"
+                />
+              </p>
+              <span className="h-5 w-px bg-white/30" aria-hidden="true" />
+              <p
+                className="px-3 py-1.5 text-lg leading-none font-extrabold tabular-nums"
+                aria-label={`Score total ${before?.total ?? player.total}`}
+              >
+                {before?.total ?? player.total}
+              </p>
+            </div>
+          </div>
+        ) : null}
         <p className="text-center text-sm font-bold text-white/60">
           {shown} / {mine.length}
         </p>
@@ -2667,6 +2694,48 @@ function RoundReveal({
       </div>
     </Shell>
   );
+}
+
+function visibleScore(grid: ViewCell[]) {
+  return grid.reduce(
+    (total, cell) =>
+      total + (cell.faceUp && !cell.empty ? (cell.value ?? 0) : 0),
+    0
+  );
+}
+
+function revealSteps(previous: GameView, view: GameView) {
+  const steps = [...(view.uncovered ?? [])];
+  const known = new Set(steps.map((step) => `${step.playerId}:${step.index}`));
+  for (const player of previous.players) {
+    const final = view.players.find((entry) => entry.id === player.id);
+    player.grid.forEach((cell, index) => {
+      const key = `${player.id}:${index}`;
+      if (known.has(key) || cell.empty || cell.faceUp) return;
+      const now = final?.grid[index];
+      if (!now || now.empty || !now.faceUp || now.value == null) return;
+      const place = steps.findIndex(
+        (step) => step.playerId === player.id && step.index > index
+      );
+      const card = { playerId: player.id, index, value: now.value };
+      if (place >= 0) {
+        steps.splice(place, 0, card);
+      } else {
+        const order = previous.players.map((entry) => entry.id);
+        const mine = order.indexOf(player.id);
+        const lastOwn = steps.findLastIndex(
+          (step) => step.playerId === player.id
+        );
+        const insertAt =
+          lastOwn >= 0
+            ? lastOwn + 1
+            : steps.findIndex((step) => order.indexOf(step.playerId) > mine);
+        steps.splice(insertAt >= 0 ? insertAt : steps.length, 0, card);
+      }
+      known.add(key);
+    });
+  }
+  return steps;
 }
 
 function gridsAfter(
