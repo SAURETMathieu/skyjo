@@ -719,6 +719,70 @@ function Board({
     return () => observer.disconnect();
   }, [others.length, presenceKey]);
 
+  const duel = others.length === 1;
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const bottom = bottomRef.current;
+    const frame = list?.parentElement;
+    if (!duel || !list || !bottom || !frame) return;
+
+    const fit = () => {
+      const article = list.querySelector("article");
+      const mine = bottom.querySelector(":scope > section");
+      const piles = bottom.firstElementChild;
+      const opponentHead = article?.querySelector(":scope > p");
+      const myHead = mine?.querySelector(":scope > div");
+      const grid = article?.querySelector(":scope > .grid");
+      if (!article || !mine || !piles || !opponentHead || !myHead || !grid) {
+        return;
+      }
+      const extra = (element: Element) => {
+        const style = getComputedStyle(element);
+        return (
+          (Number.parseFloat(style.paddingTop) || 0) +
+          (Number.parseFloat(style.paddingBottom) || 0) +
+          (Number.parseFloat(style.marginTop) || 0) +
+          (Number.parseFloat(style.marginBottom) || 0)
+        );
+      };
+      const gridStyle = getComputedStyle(grid);
+      const gapX = Number.parseFloat(gridStyle.columnGap) || 0;
+      const gapY = Number.parseFloat(gridStyle.rowGap) || 0;
+      const articleStyle = getComputedStyle(article);
+      const gridWidth =
+        article.clientWidth -
+        (Number.parseFloat(articleStyle.paddingLeft) || 0) -
+        (Number.parseFloat(articleStyle.paddingRight) || 0);
+      const byWidth = (gridWidth - gapX * 3) / 4;
+      const fixed =
+        opponentHead.getBoundingClientRect().height +
+        extra(opponentHead) +
+        myHead.getBoundingClientRect().height +
+        extra(myHead) +
+        piles.getBoundingClientRect().height +
+        extra(article) +
+        extra(mine) +
+        extra(list) +
+        gapY * 2 * 2;
+      const byHeight = ((frame.clientHeight - fixed) / 6) * 0.75;
+      const card = Math.max(40, Math.min(byWidth, byHeight));
+      if (Number.isFinite(card)) {
+        frame.style.setProperty(
+          "--duel-card",
+          `${Math.floor(card * 10) / 10}px`
+        );
+      }
+    };
+
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(frame);
+    return () => {
+      observer.disconnect();
+      frame.style.removeProperty("--duel-card");
+    };
+  }, [duel]);
+
   useEffect(() => () => stopListeners.current?.(), []);
 
   function resolveAction(
@@ -1263,14 +1327,19 @@ function Board({
       {others.length > 0 ? (
         <div
           ref={listRef}
-          className={`skyjo-opponents grid shrink-0 auto-cols-max grid-flow-col gap-2 overflow-x-auto px-1 pt-4 pb-2.5 ${
-            rows === 2 ? "grid-rows-2" : "grid-rows-1"
+          className={`skyjo-opponents grid shrink-0 pt-4 pb-2.5 ${
+            others.length === 1
+              ? "grid-cols-1"
+              : `auto-cols-max grid-flow-col gap-2 overflow-x-auto px-1 ${
+                  rows === 2 ? "grid-rows-2" : "grid-rows-1"
+                }`
           }`}
         >
           {others.map((player) => (
             <Opponent
               key={player.id}
               player={player}
+              playerCount={others.length + 1}
               active={spotlight && player.current}
               quiet={spotlight && !player.current}
             />
@@ -1504,7 +1573,19 @@ function Board({
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-x-3 gap-y-2.5">
+            <div
+              className={`grid gap-x-3 gap-y-2.5 ${
+                duel ? "justify-center" : "grid-cols-4"
+              }`}
+              style={
+                duel
+                  ? {
+                      gridTemplateColumns:
+                        "repeat(4, var(--duel-card, minmax(0, 1fr)))",
+                    }
+                  : undefined
+              }
+            >
               {you.grid.map((cell, index) => {
                 const shown = covered?.index === index ? covered : cell;
                 const canSwap =
@@ -1822,23 +1903,36 @@ function RoundScore({
 
 const Opponent = memo(function Opponent({
   player,
+  playerCount,
   active,
   quiet,
 }: {
   player: ViewPlayer;
+  playerCount: number;
   active: boolean;
   quiet: boolean;
 }) {
+  const duel = playerCount === 2;
   return (
     <article
-      className={`w-[7rem] shrink-0 rounded-2xl p-1.5 ring-2 ring-inset ${
+      className={`shrink-0 ring-2 ring-inset ${
+        duel
+          ? "w-full rounded-[1.6rem] px-2.5 pt-2.5 pb-3"
+          : "w-[7rem] rounded-2xl p-1.5"
+      } ${
         active ? "bg-amber-200/20 ring-amber-300" : "bg-black/25 ring-white/30"
       }`}
     >
-      <p className="flex items-center gap-1 text-[10px] leading-none">
+      <p
+        className={`flex items-center leading-none ${
+          duel ? "mb-2 gap-2 px-1 text-sm" : "gap-1 text-[10px]"
+        }`}
+      >
         <Presence player={player} />
         <span
-          className={`min-w-0 flex-1 truncate text-[11px] font-extrabold ${
+          className={`min-w-0 flex-1 truncate font-extrabold ${
+            duel ? "text-sm" : "text-[11px]"
+          } ${
             player.left
               ? "text-rose-200"
               : active
@@ -1852,7 +1946,7 @@ const Opponent = memo(function Opponent({
           value={player.visible}
           label={`Score visible ${player.visible}`}
           idleClass="text-white/60"
-          popClass="text-[10px]"
+          popClass={duel ? "text-xs" : "text-[10px]"}
           className="shrink-0 font-bold"
         />
         <span
@@ -1868,12 +1962,22 @@ const Opponent = memo(function Opponent({
         </p>
       ) : null}
       <div
-        className={`mt-1 grid grid-cols-4 gap-0.5 ${quiet ? "opacity-45" : ""}`}
+        className={`grid grid-cols-4 ${
+          duel ? "justify-center gap-x-3 gap-y-2.5" : "mt-1 gap-0.5"
+        } ${quiet ? "opacity-45" : ""}`}
+        style={
+          duel
+            ? {
+                gridTemplateColumns:
+                  "repeat(4, var(--duel-card, minmax(0, 1fr)))",
+              }
+            : undefined
+        }
       >
         {player.grid.map((cell, index) => (
           <CardFace
             key={`${player.id}-${index}`}
-            size="sm"
+            size={duel ? "md" : "sm"}
             value={cell.value}
             faceUp={cell.faceUp}
             empty={cell.empty}
@@ -1886,10 +1990,21 @@ const Opponent = memo(function Opponent({
 }, sameOpponent);
 
 function sameOpponent(
-  prev: { player: ViewPlayer; active: boolean; quiet: boolean },
-  next: { player: ViewPlayer; active: boolean; quiet: boolean }
+  prev: {
+    player: ViewPlayer;
+    playerCount: number;
+    active: boolean;
+    quiet: boolean;
+  },
+  next: {
+    player: ViewPlayer;
+    playerCount: number;
+    active: boolean;
+    quiet: boolean;
+  }
 ) {
   return (
+    prev.playerCount === next.playerCount &&
     prev.active === next.active &&
     prev.quiet === next.quiet &&
     prev.player.id === next.player.id &&
