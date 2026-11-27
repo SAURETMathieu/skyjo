@@ -176,14 +176,14 @@ export function project(room: Room, youId: string): GameView {
     })),
     summary: room.summary,
     uncovered: room.uncovered ?? [],
-    exchange:
-      room.exchange && room.exchange.playerId === youId
-        ? {
-            index: room.exchange.index,
-            value: room.exchange.value,
-            hidden: room.exchange.hidden,
-          }
-        : null,
+    exchange: room.exchange
+      ? {
+          playerId: room.exchange.playerId,
+          index: room.exchange.index,
+          value: room.exchange.value,
+          hidden: room.exchange.hidden,
+        }
+      : null,
     winners:
       room.phase.kind === "over"
         ? room.players

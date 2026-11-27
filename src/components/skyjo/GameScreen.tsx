@@ -27,6 +27,10 @@ import {
   Trophy,
 } from "lucide-react";
 
+import {
+  opponentMotion,
+  type OpponentMotion,
+} from "@/lib/skyjo/opponent-motion";
 import { useSkyjoSettings, type SkyjoSettings } from "@/lib/skyjo/settings";
 import type {
   Action,
@@ -646,6 +650,15 @@ function Board({
   const [frozenDiscard, setFrozenDiscard] = useState<{
     top: number | null;
   } | null>(null);
+  const [oppMask, setOppMask] = useState<{
+    playerId: string;
+    cells: (ViewCell | undefined)[];
+  } | null>(null);
+  const seenView = useRef<GameView | null>(null);
+  const playedView = useRef<number | null>(null);
+  const heldBox = useRef<Box | null>(null);
+  const oppToken = useRef(0);
+  const oppTimers = useRef<number[]>([]);
   const discardTop = frozenDiscard ? frozenDiscard.top : view.discardTop;
   const awaitingDraw = pendingDraw && view.hand === null;
   const drawn = (holding && view.holdFromDeck) || awaitingDraw;
@@ -783,6 +796,166 @@ function Board({
     };
   }, [duel]);
 
+  useLayoutEffect(() => {
+    const held = document.querySelector("[data-skyjo-held]");
+    if (!(held instanceof HTMLElement)) return;
+    const rect = held.getBoundingClientRect();
+    if (rect.width > 2) heldBox.current = rect;
+  });
+
+  useLayoutEffect(() => {
+    const next = viewRef.current;
+    if (playedView.current === next.revision) return;
+    const prev = seenView.current;
+    seenView.current = next;
+    playedView.current = next.revision;
+    if (!prev || prev.revision === next.revision) return;
+    const motion = opponentMotion(prev, next);
+    if (
+      !motion ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+
+    for (const id of oppTimers.current) window.clearTimeout(id);
+    oppTimers.current = [];
+    const token = oppToken.current + 1;
+    oppToken.current = token;
+    const live = () => oppToken.current === token;
+    const later = (delay: number, run: () => void) => {
+      const id = window.setTimeout(() => {
+        if (live()) run();
+      }, delay);
+      oppTimers.current.push(id);
+    };
+    const fly = (value: number | null, faceUp: boolean, from: Box, to: Box) => {
+      const id = flightSeq.current + 1;
+      flightSeq.current = id;
+      setFlights((list) => [...list, { id, value, faceUp, from, to }]);
+      window.setTimeout(() => {
+        setFlights((list) => list.filter((item) => item.id !== id));
+      }, 480);
+    };
+    const releaseDiscard = () => {
+      if (live()) setFrozenDiscard(null);
+    };
+
+    if (motion.kind === "draw") {
+      const from = cardRect('[data-skyjo-pile="deck"] button');
+      const to = heldBox.current;
+      if (!from || !to) return;
+      setHideHold(true);
+      fly(null, false, from, to);
+      later(480, () => setHideHold(false));
+      return;
+    }
+
+    if (motion.kind === "take" || motion.kind === "discard") {
+      const from =
+        motion.kind === "take"
+          ? cardRect('[data-skyjo-pile="discard"] button')
+          : heldBox.current;
+      const to =
+        motion.kind === "take"
+          ? heldBox.current
+          : cardRect('[data-skyjo-pile="discard"] button');
+      if (motion.kind === "discard") setFrozenDiscard({ top: motion.pile });
+      if (motion.kind === "take") setHideHold(true);
+      if (from && to) fly(motion.value, true, from, to);
+      later(480, () => {
+        setHideHold(false);
+        releaseDiscard();
+      });
+      return;
+    }
+
+    playOpponentSwap(motion, live, later, fly, releaseDiscard);
+
+    function playOpponentSwap(
+      move: Extract<OpponentMotion, { kind: "swap" }>,
+      still: () => boolean,
+      after: (delay: number, run: () => void) => void,
+      launch: (
+        value: number | null,
+        faceUp: boolean,
+        from: Box,
+        to: Box
+      ) => void,
+      unfreeze: () => void
+    ) {
+      const target = cardRect(oppCellSelector(move.playerId, move.index));
+      const deck = cardRect('[data-skyjo-pile="deck"] button');
+      const discard = cardRect('[data-skyjo-pile="discard"] button');
+      const origin = move.held
+        ? (heldBox.current ?? (move.fromDeck ? deck : discard))
+        : move.fromDiscard
+          ? discard
+          : deck;
+      if (!target || !origin) return;
+      const cells: (ViewCell | undefined)[] = [];
+      cells[move.index] = move.before;
+      for (const card of move.cleared) {
+        if (card.index === move.index) continue;
+        cells[card.index] = {
+          empty: false,
+          faceUp: true,
+          value: card.value,
+        };
+      }
+      setOppMask({ playerId: move.playerId, cells });
+      setFrozenDiscard({ top: move.pile });
+      launch(move.incoming, true, origin, target);
+      after(440, () => {
+        const depart = () => {
+          if (!still()) return;
+          const source =
+            cardRect(oppCellSelector(move.playerId, move.index)) ?? target;
+          const pile = cardRect('[data-skyjo-pile="discard"] button');
+          if (pile) launch(move.outgoing, true, source, pile);
+          if (move.cleared.length === 0) {
+            setOppMask(null);
+            after(480, unfreeze);
+            return;
+          }
+          const placed = cells.slice();
+          placed[move.index] = {
+            empty: false,
+            faceUp: true,
+            value: move.incoming,
+          };
+          setOppMask({ playerId: move.playerId, cells: placed });
+          after(420, () => {
+            if (!still()) return;
+            const destination = cardRect('[data-skyjo-pile="discard"] button');
+            if (destination) {
+              for (const card of move.cleared) {
+                const box =
+                  cardRect(oppCellSelector(move.playerId, card.index)) ??
+                  source;
+                launch(card.value, true, box, destination);
+              }
+            }
+            setOppMask(null);
+            after(480, unfreeze);
+          });
+        };
+        if (!move.hidden) {
+          depart();
+          return;
+        }
+        const revealed = cells.slice();
+        revealed[move.index] = {
+          empty: false,
+          faceUp: true,
+          value: move.outgoing,
+        };
+        setOppMask({ playerId: move.playerId, cells: revealed });
+        after(360, depart);
+      });
+    }
+  }, [view.revision]);
+
   useEffect(() => () => stopListeners.current?.(), []);
 
   function resolveAction(
@@ -832,7 +1005,7 @@ function Board({
         ? null
         : viewRef.current.players.find((player) => player.isYou)?.grid[index];
     const started = performance.now();
-    setFlights((list) => [...list, { id, value, from, to }]);
+    setFlights((list) => [...list, { id, value, faceUp: true, from, to }]);
     if (previous && !previous.empty && index !== null) {
       setCovered({
         index,
@@ -1342,6 +1515,7 @@ function Board({
               playerCount={others.length + 1}
               active={spotlight && player.current}
               quiet={spotlight && !player.current}
+              mask={oppMask?.playerId === player.id ? oppMask.cells : null}
             />
           ))}
         </div>
@@ -1365,6 +1539,7 @@ function Board({
           </section>
           <section className="flex shrink-0 items-end gap-1.5 rounded-2xl bg-[#02150f]/80 px-2 pt-3 pb-1.5 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.5)]">
             <Pile
+              mark="deck"
               title="Pioche"
               detail={String(deckCount)}
               lifted={
@@ -1476,6 +1651,7 @@ function Board({
               </p>
             </div>
             <Pile
+              mark="discard"
               pileRef={discardRef}
               hot={drag?.moved === true && drag.overDiscard}
               title="Défausse"
@@ -1665,10 +1841,27 @@ type CardDrag = {
 
 type Flight = {
   id: number;
-  value: number;
+  value: number | null;
+  faceUp: boolean;
   from: Box;
   to: Box;
 };
+
+function oppCellSelector(playerId: string, index: number) {
+  return `[data-skyjo-opp-cell="${CSS.escape(playerId)}:${index}"]`;
+}
+
+function cardRect(selector: string): Box | null {
+  const node = document.querySelector(selector);
+  if (!(node instanceof HTMLElement)) return null;
+  const card = node.matches("[role='img'], [role='button']")
+    ? node
+    : node.querySelector("[role='img'], [role='button']");
+  if (!(card instanceof HTMLElement)) return null;
+  const rect = card.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return null;
+  return rect;
+}
 
 function FlyingCard({ flight }: { flight: Flight }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -1695,7 +1888,12 @@ function FlyingCard({ flight }: { flight: Flight }) {
       aria-hidden
       className="skyjo-flight pointer-events-none fixed z-30"
     >
-      <CardFace faceUp value={flight.value} label="Carte posée" />
+      <CardFace
+        faceUp={flight.faceUp}
+        value={flight.faceUp ? flight.value : null}
+        settle
+        label="Carte en mouvement"
+      />
     </div>
   );
 }
@@ -1906,11 +2104,13 @@ const Opponent = memo(function Opponent({
   playerCount,
   active,
   quiet,
+  mask,
 }: {
   player: ViewPlayer;
   playerCount: number;
   active: boolean;
   quiet: boolean;
+  mask?: (ViewCell | undefined)[] | null;
 }) {
   const duel = playerCount === 2;
   return (
@@ -1974,16 +2174,24 @@ const Opponent = memo(function Opponent({
             : undefined
         }
       >
-        {player.grid.map((cell, index) => (
-          <CardFace
-            key={`${player.id}-${index}`}
-            size={duel ? "md" : "sm"}
-            value={cell.value}
-            faceUp={cell.faceUp}
-            empty={cell.empty}
-            label={`${player.name} carte ${index + 1}`}
-          />
-        ))}
+        {player.grid.map((cell, index) => {
+          const shown = mask?.[index] ?? cell;
+          return (
+            <div
+              key={`${player.id}-${index}`}
+              data-skyjo-opp-cell={`${player.id}:${index}`}
+              className="contents"
+            >
+              <CardFace
+                size={duel ? "md" : "sm"}
+                value={shown.value}
+                faceUp={shown.faceUp}
+                empty={shown.empty}
+                label={`${player.name} carte ${index + 1}`}
+              />
+            </div>
+          );
+        })}
       </div>
     </article>
   );
@@ -1995,18 +2203,21 @@ function sameOpponent(
     playerCount: number;
     active: boolean;
     quiet: boolean;
+    mask?: (ViewCell | undefined)[] | null;
   },
   next: {
     player: ViewPlayer;
     playerCount: number;
     active: boolean;
     quiet: boolean;
+    mask?: (ViewCell | undefined)[] | null;
   }
 ) {
   return (
     prev.playerCount === next.playerCount &&
     prev.active === next.active &&
     prev.quiet === next.quiet &&
+    sameMask(prev.mask, next.mask) &&
     prev.player.id === next.player.id &&
     prev.player.name === next.player.name &&
     prev.player.connected === next.player.connected &&
@@ -2016,6 +2227,21 @@ function sameOpponent(
     prev.player.current === next.player.current &&
     sameGrid(prev.player.grid, next.player.grid)
   );
+}
+
+function sameMask(
+  prev?: (ViewCell | undefined)[] | null,
+  next?: (ViewCell | undefined)[] | null
+) {
+  if (!prev && !next) return true;
+  if (!prev || !next || prev.length !== next.length) return false;
+  for (let index = 0; index < prev.length; index += 1) {
+    const left = prev[index];
+    const right = next[index];
+    if (left === right) continue;
+    if (!left || !right || !sameCell(left, right)) return false;
+  }
+  return true;
 }
 
 function sameGrid(prev: ViewCell[], next: ViewCell[]) {
@@ -2030,6 +2256,7 @@ function sameGrid(prev: ViewCell[], next: ViewCell[]) {
 
 function Pile({
   pileRef,
+  mark,
   title,
   detail,
   lifted,
@@ -2047,6 +2274,7 @@ function Pile({
   children,
 }: {
   pileRef?: Ref<HTMLDivElement>;
+  mark?: "deck" | "discard";
   title: string;
   detail?: string;
   lifted: ReactNode;
@@ -2066,7 +2294,11 @@ function Pile({
   children: ReactNode;
 }) {
   return (
-    <div ref={pileRef} className="flex w-12 flex-col items-center">
+    <div
+      ref={pileRef}
+      data-skyjo-pile={mark}
+      className="flex w-12 flex-col items-center"
+    >
       <div className="relative w-full">
         <button
           type="button"

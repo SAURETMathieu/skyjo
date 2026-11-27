@@ -152,7 +152,12 @@ export type GameView = {
   players: ViewPlayer[];
   summary: RoundScore[] | null;
   uncovered: RevealCard[];
-  exchange: { index: number; value: number; hidden: boolean } | null;
+  exchange: {
+    playerId: string;
+    index: number;
+    value: number;
+    hidden: boolean;
+  } | null;
   winners: string[];
   flipsNeeded: number;
   actions: {

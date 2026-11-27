@@ -151,7 +151,13 @@ test("une colonne identique part sur la défausse après la carte échangée", (
     value: 9,
     hidden: true,
   });
-  assert.equal(project(swapped.state, host).exchange?.value, 9);
+  assert.deepEqual(project(swapped.state, host).exchange, {
+    playerId: host,
+    index: 8,
+    value: 9,
+    hidden: true,
+  });
+  assert.equal(project(swapped.state, "spectateur").exchange?.value, 9);
 });
 
 test("on peut encore piocher après avoir pris la défausse", () => {
