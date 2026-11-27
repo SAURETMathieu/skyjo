@@ -207,6 +207,25 @@
     height 0.42s cubic-bezier(0.2, 0.75, 0.2, 1);
 }
 
+@keyframes skyjo-score-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -16px);
+  }
+}
+
+.skyjo-score-pop {
+  animation: skyjo-score-pop 0.9s ease-out forwards;
+}
+
 .skyjo-opponents {
   scrollbar-color: rgba(252, 211, 77, 0.85) rgba(255, 255, 255, 0.1);
   scrollbar-width: thin;
@@ -235,7 +254,8 @@
   .skyjo-flip-shut,
   .skyjo-flip-hold,
   .skyjo-flip-open,
-  .skyjo-flight {
+  .skyjo-flight,
+  .skyjo-score-pop {
     animation: none;
     transition: none;
   }

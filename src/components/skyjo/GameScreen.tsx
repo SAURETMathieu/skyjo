@@ -1263,7 +1263,7 @@ function Board({
       {others.length > 0 ? (
         <div
           ref={listRef}
-          className={`skyjo-opponents grid shrink-0 auto-cols-max grid-flow-col gap-2 overflow-x-auto px-1 pt-2 pb-2.5 ${
+          className={`skyjo-opponents grid shrink-0 auto-cols-max grid-flow-col gap-2 overflow-x-auto px-1 pt-4 pb-2.5 ${
             rows === 2 ? "grid-rows-2" : "grid-rows-1"
           }`}
         >
@@ -1487,11 +1487,13 @@ function Board({
                 <PresenceNote player={you} rejoin />
               </h2>
               <div className="flex shrink-0 items-center rounded-full bg-black/40 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]">
-                <p
-                  className="px-2.5 py-1 text-base leading-none font-bold text-white/65 tabular-nums"
-                  aria-label={`Score visible ${you.visible}`}
-                >
-                  {you.visible}
+                <p className="px-2.5 py-1 text-base leading-none font-bold tabular-nums">
+                  <RoundScore
+                    value={you.visible}
+                    label={`Score visible ${you.visible}`}
+                    idleClass="text-white/65"
+                    popClass="text-xs"
+                  />
                 </p>
                 <span className="h-5 w-px bg-white/30" aria-hidden="true" />
                 <p
@@ -1731,6 +1733,93 @@ function sameCell(prev: ViewCell, next: ViewCell) {
   );
 }
 
+function RoundScore({
+  value,
+  label,
+  idleClass,
+  popClass,
+  className = "",
+}: {
+  value: number;
+  label: string;
+  idleClass: string;
+  popClass: string;
+  className?: string;
+}) {
+  const shownRef = useRef(value);
+  const [shown, setShown] = useState(value);
+  const [tone, setTone] = useState<"up" | "down" | null>(null);
+  const [burst, setBurst] = useState<{ id: number; delta: number } | null>(
+    null
+  );
+  const burstId = useRef(0);
+
+  useEffect(() => {
+    const from = shownRef.current;
+    if (from === value) return;
+    const delta = value - from;
+    const id = burstId.current + 1;
+    burstId.current = id;
+    setBurst({ id, delta });
+    setTone(delta > 0 ? "up" : "down");
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    let frame = 0;
+    if (reduce) {
+      shownRef.current = value;
+      setShown(value);
+    } else {
+      const started = performance.now();
+      const tick = (now: number) => {
+        const progress = Math.min(1, (now - started) / 480);
+        const eased = 1 - (1 - progress) ** 3;
+        const next = progress < 1 ? Math.round(from + delta * eased) : value;
+        shownRef.current = next;
+        setShown(next);
+        if (progress < 1) frame = requestAnimationFrame(tick);
+      };
+      frame = requestAnimationFrame(tick);
+    }
+    const toneTimer = window.setTimeout(() => setTone(null), 560);
+    const burstTimer = window.setTimeout(() => {
+      setBurst((current) => (current?.id === id ? null : current));
+    }, 900);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(toneTimer);
+      window.clearTimeout(burstTimer);
+    };
+  }, [value]);
+
+  return (
+    <span className={`relative inline-block ${className}`}>
+      <span
+        className={
+          tone === "up"
+            ? "text-rose-300"
+            : tone === "down"
+              ? "text-emerald-300"
+              : idleClass
+        }
+        aria-label={label}
+      >
+        {shown}
+      </span>
+      {burst ? (
+        <span
+          key={burst.id}
+          className={`skyjo-score-pop pointer-events-none absolute bottom-full left-1/2 z-10 font-extrabold whitespace-nowrap tabular-nums ${popClass} ${
+            burst.delta > 0 ? "text-rose-300" : "text-emerald-300"
+          }`}
+        >
+          {burst.delta > 0 ? `+${burst.delta}` : String(burst.delta)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 const Opponent = memo(function Opponent({
   player,
   active,
@@ -1759,12 +1848,13 @@ const Opponent = memo(function Opponent({
         >
           {player.name}
         </span>
-        <span
-          className="shrink-0 font-bold text-white/60 tabular-nums"
-          aria-label={`Score visible ${player.visible}`}
-        >
-          {player.visible}
-        </span>
+        <RoundScore
+          value={player.visible}
+          label={`Score visible ${player.visible}`}
+          idleClass="text-white/60"
+          popClass="text-[10px]"
+          className="shrink-0 font-bold"
+        />
         <span
           className="shrink-0 font-extrabold tabular-nums"
           aria-label={`Score total ${player.total}`}
