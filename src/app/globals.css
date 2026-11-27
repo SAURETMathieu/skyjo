@@ -169,20 +169,34 @@
   animation: skyjo-ring 1.15s ease-in-out infinite;
 }
 
-@keyframes skyjo-flip {
-  0% {
-    transform: scaleX(0.08);
+@keyframes skyjo-flip-shut {
+  from {
+    transform: scaleX(1);
   }
-  60% {
-    transform: scaleX(1.05);
+  to {
+    transform: scaleX(0.04);
   }
-  100% {
+}
+
+@keyframes skyjo-flip-open {
+  from {
+    transform: scaleX(0.04);
+  }
+  to {
     transform: scaleX(1);
   }
 }
 
-.skyjo-flip {
-  animation: skyjo-flip 0.42s ease-out;
+.skyjo-flip-shut {
+  animation: skyjo-flip-shut 0.14s ease-in forwards;
+}
+
+.skyjo-flip-hold {
+  transform: scaleX(0.04);
+}
+
+.skyjo-flip-open {
+  animation: skyjo-flip-open 0.18s ease-out;
 }
 
 .skyjo-flight {
@@ -218,7 +232,9 @@
   .skyjo-callout,
   .skyjo-callout-short,
   .skyjo-ring,
-  .skyjo-flip,
+  .skyjo-flip-shut,
+  .skyjo-flip-hold,
+  .skyjo-flip-open,
   .skyjo-flight {
     animation: none;
     transition: none;

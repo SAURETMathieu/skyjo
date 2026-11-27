@@ -643,6 +643,10 @@ function Board({
   const [locking, setLocking] = useState<null | "deck" | "discard">(null);
   const [pendingDraw, setPendingDraw] = useState(false);
   const [pendingFlip, setPendingFlip] = useState<number | null>(null);
+  const [frozenDiscard, setFrozenDiscard] = useState<{
+    top: number | null;
+  } | null>(null);
+  const discardTop = frozenDiscard ? frozenDiscard.top : view.discardTop;
   const awaitingDraw = pendingDraw && view.hand === null;
   const drawn = (holding && view.holdFromDeck) || awaitingDraw;
   const deckCount = awaitingDraw
@@ -752,7 +756,13 @@ function Board({
   }
   placeRef.current = placeCard;
 
-  function launchCard(index: number | null, value: number, from: Box, to: Box) {
+  function launchCard(
+    index: number | null,
+    value: number,
+    from: Box,
+    to: Box,
+    freezeDiscard = false
+  ) {
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
@@ -773,12 +783,14 @@ function Board({
         empty: previous.empty,
       });
     }
+    if (freezeDiscard) setFrozenDiscard({ top: viewRef.current.discardTop });
     setHideHold(true);
     if (index !== null) setSettled(index);
     return (ok: boolean) => {
       const clear = () => {
         setFlights((list) => list.filter((item) => item.id !== id));
         setHideHold(false);
+        if (freezeDiscard) setFrozenDiscard(null);
         if (index !== null) {
           setCovered((current) => (current?.index === index ? null : current));
           setSettled((current) => (current === index ? null : current));
@@ -796,11 +808,20 @@ function Board({
               current?.index === index ? null : current
             );
           }
+          if (freezeDiscard) setFrozenDiscard(null);
         },
         Math.max(0, 430 - elapsed)
       );
       window.setTimeout(clear, Math.max(0, 480 - elapsed));
     };
+  }
+
+  function discardFlight(value: number, from: Box) {
+    const target = discardRef.current?.querySelector(
+      "[role='button'], [role='img']"
+    );
+    if (!(target instanceof HTMLElement)) return null;
+    return launchCard(null, value, from, target.getBoundingClientRect(), true);
   }
 
   function occupied(index: number) {
@@ -1040,11 +1061,13 @@ function Board({
         clearDrag();
         return;
       }
+      const finish = discardFlight(drawn.hand, from);
+      clearDrag();
       const next = await resolveAction(
         onActionRef.current({ type: "discard-drawn" })
       );
-      clearDrag();
-      if (next == null) setHideHold(false);
+      finish?.(next != null);
+      if (!finish && next == null) setHideHold(false);
       return;
     }
     if (overCell === null) {
@@ -1249,7 +1272,23 @@ function Board({
                   aria-label="Défausser la carte piochée"
                   disabled={!view.actions.discardDrawn}
                   onClick={() =>
-                    guarded(() => onAction({ type: "discard-drawn" }))
+                    guarded(() => {
+                      const value = viewRef.current.hand;
+                      const source =
+                        document.querySelector("[data-skyjo-held]");
+                      const finish =
+                        value !== null && source instanceof HTMLElement
+                          ? discardFlight(value, source.getBoundingClientRect())
+                          : null;
+                      const result = onAction({ type: "discard-drawn" });
+                      if (finish) {
+                        void Promise.resolve(result).then(
+                          (next) => finish(next != null),
+                          () => finish(false)
+                        );
+                      }
+                      return result;
+                    })
                   }
                   className={`grid size-8 place-items-center rounded-full bg-amber-300 text-[#1a1405] shadow-md ${
                     view.actions.discardDrawn
@@ -1308,13 +1347,13 @@ function Board({
               onClick={() => guarded(() => onAction({ type: "take-discard" }))}
               label={
                 view.actions.takeDiscard
-                  ? `Prendre la défausse ${view.discardTop}`
-                  : view.discardTop === null
+                  ? `Prendre la défausse ${discardTop}`
+                  : discardTop === null
                     ? "Défausse vide"
-                    : `Défausse ${view.discardTop}`
+                    : `Défausse ${discardTop}`
               }
             >
-              {view.discardTop === null ? (
+              {discardTop === null ? (
                 <CardFace
                   empty
                   faceUp={false}
@@ -1324,8 +1363,8 @@ function Board({
               ) : (
                 <CardFace
                   faceUp
-                  value={view.discardTop}
-                  label={`Défausse ${view.discardTop}`}
+                  value={discardTop}
+                  label={`Défausse ${discardTop}`}
                 />
               )}
             </Pile>
@@ -1345,18 +1384,21 @@ function Board({
                 <span className="truncate">{you.name}</span>
                 <PresenceNote player={you} rejoin />
               </h2>
-              <p
-                className="shrink-0 text-xs font-bold text-white/65 tabular-nums"
-                aria-label={`Score visible ${you.visible}`}
-              >
-                {you.visible}
-              </p>
-              <p
-                className="shrink-0 text-xs font-extrabold tabular-nums"
-                aria-label={`Score total ${you.total}`}
-              >
-                {you.total}
-              </p>
+              <div className="flex shrink-0 items-center rounded-full bg-black/40 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]">
+                <p
+                  className="px-2.5 py-1 text-base leading-none font-bold text-white/65 tabular-nums"
+                  aria-label={`Score visible ${you.visible}`}
+                >
+                  {you.visible}
+                </p>
+                <span className="h-5 w-px bg-white/30" aria-hidden="true" />
+                <p
+                  className="px-2.5 py-1 text-lg leading-none font-extrabold tabular-nums"
+                  aria-label={`Score total ${you.total}`}
+                >
+                  {you.total}
+                </p>
+              </div>
             </div>
             <div className="grid grid-cols-4 gap-x-3 gap-y-2.5">
               {you.grid.map((cell, index) => {
