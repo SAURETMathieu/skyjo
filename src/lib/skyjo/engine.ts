@@ -65,6 +65,7 @@ export function createRoom(input: {
     summary: null,
     uncovered: [],
     exchange: null,
+    placed: null,
     lastEvent: "Partie créée",
     feed: [],
   };
@@ -177,6 +178,7 @@ export function project(room: Room, youId: string): GameView {
     })),
     summary: room.summary,
     uncovered: room.uncovered ?? [],
+    placed: room.placed ?? null,
     exchange: room.exchange
       ? {
           playerId: room.exchange.playerId,
@@ -226,6 +228,7 @@ function mutate(
   rng: () => number
 ): string | null {
   room.exchange = null;
+  room.placed = null;
   switch (action.type) {
     case "add-bot":
       return addBot(room, playerId, action.level ?? "normal");
@@ -383,6 +386,7 @@ function beginRound(room: Room, rng: () => number) {
   room.summary = null;
   room.uncovered = [];
   room.exchange = null;
+  room.placed = null;
   room.phase = { kind: "opening" };
   const starterId = room.round === 1 ? null : room.closerId;
 
@@ -501,9 +505,9 @@ function swapCard(room: Room, playerId: string, index: number) {
     room,
     `${player.name} pose un ${placed.value} à la place d'un ${previous.value}`
   );
-  const shown = { playerId: player.id, index, value: placed.value };
+  room.placed = { playerId: player.id, index, value: placed.value };
   clearColumns(room, player);
-  finishTurn(room, player, shown);
+  finishTurn(room, player);
   return null;
 }
 

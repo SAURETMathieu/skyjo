@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 
+import { opponentMotion } from "./opponent-motion.ts";
+import type { GameView, ViewCell, ViewPlayer } from "./types.ts";
+
 function test(name: string, run: () => void) {
   try {
     run();
@@ -9,9 +12,6 @@ function test(name: string, run: () => void) {
     throw error;
   }
 }
-
-import { opponentMotion } from "./opponent-motion.ts";
-import type { GameView, ViewCell, ViewPlayer } from "./types.ts";
 
 function cell(value: number | null, faceUp = false): ViewCell {
   if (value === null) return { empty: true, faceUp: false, value: null };
@@ -59,6 +59,7 @@ function view(patch: Partial<GameView>): GameView {
     summary: null,
     uncovered: [],
     exchange: null,
+    placed: null,
     winners: [],
     flipsNeeded: 0,
     actions: {

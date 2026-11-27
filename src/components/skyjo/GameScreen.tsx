@@ -2586,12 +2586,16 @@ function RoundReveal({
   onDone: () => void;
 }) {
   const steps = useMemo(() => revealSteps(previous, view), [previous, view]);
+  const basePlayers = useMemo(
+    () => gridsAtReveal(previous, view),
+    [previous, view]
+  );
   const [tick, setTick] = useState(0);
   const done = useRef(onDone);
   done.current = onDone;
   const flipped = Math.min(tick, steps.length);
   const cleared = Math.max(0, tick - 1);
-  const grids = gridsAfter(previous.players, steps, flipped, cleared);
+  const grids = gridsAfter(basePlayers, steps, flipped, cleared);
   const active = steps[Math.min(flipped, steps.length - 1)];
   const player = view.players.find((entry) => entry.id === active?.playerId);
   const before = previous.players.find(
@@ -2704,6 +2708,36 @@ function visibleScore(grid: ViewCell[]) {
   );
 }
 
+function gridsAtReveal(previous: GameView, view: GameView) {
+  const placed = view.placed;
+  if (!placed) return previous.players;
+  return previous.players.map((player) => {
+    if (player.id !== placed.playerId) return player;
+    const final = view.players.find((entry) => entry.id === player.id);
+    const column = placed.index % 4;
+    const slots = [column, column + 4, column + 8];
+    const alreadyGone =
+      slots.every((slot) => final?.grid[slot]?.empty) &&
+      slots.every((slot) => {
+        if (slot === placed.index) return true;
+        const cell = player.grid[slot];
+        return !cell || cell.empty || cell.faceUp;
+      });
+    return {
+      ...player,
+      grid: player.grid.map((cell, index) => {
+        if (alreadyGone && slots.includes(index)) {
+          return { empty: true, faceUp: false, value: null };
+        }
+        if (index !== placed.index) return cell;
+        const now = final?.grid[index];
+        if (now && !now.empty && now.faceUp) return { ...now };
+        return { empty: false, faceUp: true, value: placed.value };
+      }),
+    };
+  });
+}
+
 function revealSteps(previous: GameView, view: GameView) {
   const steps = [...(view.uncovered ?? [])];
   const known = new Set(steps.map((step) => `${step.playerId}:${step.index}`));
@@ -2711,7 +2745,14 @@ function revealSteps(previous: GameView, view: GameView) {
     const final = view.players.find((entry) => entry.id === player.id);
     player.grid.forEach((cell, index) => {
       const key = `${player.id}:${index}`;
-      if (known.has(key) || cell.empty || cell.faceUp) return;
+      if (
+        known.has(key) ||
+        cell.empty ||
+        cell.faceUp ||
+        (view.placed?.playerId === player.id && view.placed.index === index)
+      ) {
+        return;
+      }
       const now = final?.grid[index];
       if (!now || now.empty || !now.faceUp || now.value == null) return;
       const place = steps.findIndex(

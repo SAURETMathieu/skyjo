@@ -179,6 +179,7 @@ function previewRoom(name: string, preview: "manche" | "partie"): Room {
     summary,
     uncovered: [],
     exchange: null,
+    placed: null,
     lastEvent: "",
     feed: [],
   };

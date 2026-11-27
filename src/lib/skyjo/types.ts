@@ -77,6 +77,7 @@ export type Room = {
   summary: RoundScore[] | null;
   uncovered: RevealCard[];
   exchange: Exchange | null;
+  placed: RevealCard | null;
   lastEvent: string;
   feed: string[];
 };
@@ -158,6 +159,7 @@ export type GameView = {
     value: number;
     hidden: boolean;
   } | null;
+  placed: RevealCard | null;
   winners: string[];
   flipsNeeded: number;
   actions: {

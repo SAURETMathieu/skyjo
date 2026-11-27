@@ -54,6 +54,7 @@ function room(partial: Partial<Room> & Pick<Room, "players" | "phase">): Room {
     summary: null,
     uncovered: [],
     exchange: null,
+    placed: null,
     lastEvent: "",
     feed: [],
     ...partial,
@@ -335,6 +336,39 @@ test("les cartes cachées se retournent joueur par joueur", () => {
   assert.deepEqual(
     ended.state.uncovered.map((card) => `${card.playerId}:${card.index}`),
     ["b:0", "b:3", "c:2", "c:11"]
+  );
+});
+
+test("une carte remplacée au dernier tour n'est pas à retourner", () => {
+  const closer = zeros(12);
+  closer[0] = down("c0", 8);
+  const last = zeros(12);
+  last[5] = down("l5", 3);
+  last[11] = down("l11", 9);
+  const ended = applyAction(
+    room({
+      players: [player(host, closer), player("b", last)],
+      phase: { kind: "hold", card: card("p", 1), fromDeck: true },
+      discard: [card("d", 4)],
+      current: 1,
+      closerId: host,
+      lastRound: true,
+      pending: ["b"],
+    }),
+    "b",
+    { type: "swap", index: 5 }
+  );
+  assert.equal(ended.ok, true);
+  assert.deepEqual(ended.state.placed, {
+    playerId: "b",
+    index: 5,
+    value: 1,
+  });
+  assert.equal(ended.state.players[1]?.grid[5]?.value, 1);
+  assert.equal(ended.state.players[1]?.grid[5]?.faceUp, true);
+  assert.deepEqual(
+    ended.state.uncovered.map((entry) => `${entry.playerId}:${entry.index}`),
+    [`${host}:0`, "b:11"]
   );
 });
 
