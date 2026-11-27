@@ -2333,7 +2333,8 @@ function EndGrid({ player }: { player: ViewPlayer }) {
   );
 }
 
-const REVEAL_STEP_MS = 460;
+const REVEAL_STEP_MS = 1100;
+const REVEAL_HOLD_MS = 1800;
 
 function RoundReveal({
   previous,
@@ -2368,7 +2369,7 @@ function RoundReveal({
 
   useEffect(() => {
     if (tick > steps.length) {
-      const pause = window.setTimeout(() => done.current(), 350);
+      const pause = window.setTimeout(() => done.current(), REVEAL_HOLD_MS);
       return () => window.clearTimeout(pause);
     }
     const timer = window.setTimeout(
