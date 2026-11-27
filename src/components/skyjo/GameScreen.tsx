@@ -1456,12 +1456,14 @@ function Board({
               {discardTop === null ? (
                 <CardFace
                   empty
+                  settle
                   faceUp={false}
                   value={null}
                   label="Défausse vide"
                 />
               ) : (
                 <CardFace
+                  settle
                   faceUp
                   value={discardTop}
                   label={`Défausse ${discardTop}`}
