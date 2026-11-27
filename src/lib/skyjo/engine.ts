@@ -63,6 +63,7 @@ export function createRoom(input: {
     lastRound: false,
     summary: null,
     uncovered: [],
+    exchange: null,
     lastEvent: "Partie créée",
     feed: [],
   };
@@ -175,6 +176,14 @@ export function project(room: Room, youId: string): GameView {
     })),
     summary: room.summary,
     uncovered: room.uncovered ?? [],
+    exchange:
+      room.exchange && room.exchange.playerId === youId
+        ? {
+            index: room.exchange.index,
+            value: room.exchange.value,
+            hidden: room.exchange.hidden,
+          }
+        : null,
     winners:
       room.phase.kind === "over"
         ? room.players
@@ -215,6 +224,7 @@ function mutate(
   action: Action,
   rng: () => number
 ): string | null {
+  room.exchange = null;
   switch (action.type) {
     case "add-bot":
       return addBot(room, playerId, action.level ?? "normal");
@@ -371,6 +381,7 @@ function beginRound(room: Room, rng: () => number) {
   room.lastRound = false;
   room.summary = null;
   room.uncovered = [];
+  room.exchange = null;
   room.phase = { kind: "opening" };
   const starterId = room.round === 1 ? null : room.closerId;
 
@@ -478,6 +489,12 @@ function swapCard(room: Room, playerId: string, index: number) {
   const placed = room.phase.card;
   player.grid[index] = { ...placed, faceUp: true };
   room.discard.push({ id: previous.id, value: previous.value });
+  room.exchange = {
+    playerId: player.id,
+    index,
+    value: previous.value,
+    hidden: !previous.faceUp,
+  };
   say(
     room,
     `${player.name} pose un ${placed.value} à la place d'un ${previous.value}`

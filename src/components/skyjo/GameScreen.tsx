@@ -731,28 +731,20 @@ function Board({
     if (busyRef.current || sending.current) return;
     const value = viewRef.current.hand;
     const source = document.querySelector("[data-skyjo-held]");
-    if (value === null || !source) {
-      sending.current = true;
-      const result = onActionRef.current({ type: "swap", index });
-      void Promise.resolve(result).finally(() => {
-        sending.current = false;
-      });
-      return;
-    }
-    const finish = launchCard(
-      index,
-      value,
-      source.getBoundingClientRect(),
-      target.getBoundingClientRect()
-    );
     sending.current = true;
     const result = onActionRef.current({ type: "swap", index });
     void Promise.resolve(result).finally(() => {
       sending.current = false;
     });
-    if (result instanceof Promise)
-      void result.then((next) => finish(next != null));
-    else finish(result != null);
+    if (value === null || !(source instanceof HTMLElement)) return;
+    replaceCard(
+      index,
+      value,
+      source.getBoundingClientRect(),
+      target.getBoundingClientRect(),
+      result,
+      viewRef.current.discardTop
+    );
   }
   placeRef.current = placeCard;
 
@@ -761,8 +753,10 @@ function Board({
     value: number,
     from: Box,
     to: Box,
-    freezeDiscard = false
+    options?: { freezeDiscard?: boolean; holdCover?: boolean }
   ) {
+    const freezeDiscard = options?.freezeDiscard ?? false;
+    const holdCover = options?.holdCover ?? false;
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
@@ -786,34 +780,124 @@ function Board({
     if (freezeDiscard) setFrozenDiscard({ top: viewRef.current.discardTop });
     setHideHold(true);
     if (index !== null) setSettled(index);
+    let cancelled = false;
+    const flightTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setFlights((list) => list.filter((item) => item.id !== id));
+      setHideHold(false);
+    }, 480);
     return (ok: boolean) => {
-      const clear = () => {
-        setFlights((list) => list.filter((item) => item.id !== id));
-        setHideHold(false);
+      const clearCover = () => {
         if (freezeDiscard) setFrozenDiscard(null);
-        if (index !== null) {
-          setCovered((current) => (current?.index === index ? null : current));
-          setSettled((current) => (current === index ? null : current));
-        }
+        if (index === null) return;
+        setCovered((current) => (current?.index === index ? null : current));
+        setSettled((current) => (current === index ? null : current));
       };
       if (!ok) {
-        clear();
+        cancelled = true;
+        window.clearTimeout(flightTimer);
+        setFlights((list) => list.filter((item) => item.id !== id));
+        setHideHold(false);
+        clearCover();
         return;
       }
+      if (holdCover) return;
       const elapsed = performance.now() - started;
-      window.setTimeout(
-        () => {
-          if (index !== null) {
-            setCovered((current) =>
-              current?.index === index ? null : current
-            );
-          }
-          if (freezeDiscard) setFrozenDiscard(null);
-        },
-        Math.max(0, 430 - elapsed)
-      );
-      window.setTimeout(clear, Math.max(0, 480 - elapsed));
+      window.setTimeout(clearCover, Math.max(0, 430 - elapsed));
     };
+  }
+
+  function replaceCard(
+    index: number,
+    incoming: number,
+    from: Box,
+    to: Box,
+    result: GameView | null | Promise<GameView | null>,
+    pinnedDiscard: number | null
+  ) {
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    if (reduce) return;
+    const cell = viewRef.current.players.find((player) => player.isYou)?.grid[
+      index
+    ];
+    const shown = cell && !cell.empty && cell.faceUp ? cell.value : null;
+    const started = performance.now();
+    setFrozenDiscard({ top: pinnedDiscard });
+    const finishIn = launchCard(index, incoming, from, to, { holdCover: true });
+    const showPlaced = () => {
+      setCovered((current) => (current?.index === index ? null : current));
+      setSettled(index);
+      window.setTimeout(() => {
+        setSettled((current) => (current === index ? null : current));
+      }, 80);
+    };
+    const depart = (value: number) => {
+      const source = cellBox(index) ?? to;
+      const pile = discardRef.current?.querySelector(
+        "[role='button'], [role='img']"
+      );
+      const landed = performance.now() - started >= 460;
+      if (landed) {
+        showPlaced();
+      } else {
+        setCovered({ index, faceUp: false, value: null, empty: true });
+        setSettled(index);
+        window.setTimeout(
+          showPlaced,
+          Math.max(0, started + 480 - performance.now())
+        );
+      }
+      if (pile instanceof HTMLElement) {
+        const finishOut = launchCard(
+          null,
+          value,
+          source,
+          pile.getBoundingClientRect()
+        );
+        finishOut(true);
+      }
+      window.setTimeout(() => setFrozenDiscard(null), 430);
+    };
+    void Promise.resolve(result).then(
+      (next) => {
+        const exchange =
+          next?.exchange && next.exchange.index === index
+            ? next.exchange
+            : null;
+        const outgoing =
+          shown ??
+          exchange?.value ??
+          (next &&
+          next.players.find((player) => player.isYou)?.grid[index]?.empty ===
+            false
+            ? next.discardTop
+            : null);
+        if (!next || outgoing == null) {
+          finishIn(false);
+          setFrozenDiscard(null);
+          return;
+        }
+        const hidden = shown == null && (exchange?.hidden ?? true);
+        if (!hidden) {
+          depart(outgoing);
+          return;
+        }
+        setSettled(null);
+        setCovered({
+          index,
+          faceUp: true,
+          value: outgoing,
+          empty: false,
+        });
+        window.setTimeout(() => depart(outgoing), 360);
+      },
+      () => {
+        finishIn(false);
+        setFrozenDiscard(null);
+      }
+    );
   }
 
   function discardFlight(value: number, from: Box) {
@@ -821,7 +905,9 @@ function Board({
       "[role='button'], [role='img']"
     );
     if (!(target instanceof HTMLElement)) return null;
-    return launchCard(null, value, from, target.getBoundingClientRect(), true);
+    return launchCard(null, value, from, target.getBoundingClientRect(), {
+      freezeDiscard: true,
+    });
   }
 
   function occupied(index: number) {
@@ -1086,20 +1172,20 @@ function Board({
       }
       setLocking("discard");
       clearDrag();
-      const finish = launchCard(overCell, origin.value, from, target);
-      const taken = await resolveAction(
+      const swapped = resolveAction(
         onActionRef.current({ type: "take-discard" })
-      );
-      if (taken?.hand == null) {
+      ).then((taken) => {
+        if (taken?.hand == null) return null;
+        return resolveAction(
+          onActionRef.current({ type: "swap", index: overCell })
+        );
+      });
+      replaceCard(overCell, origin.value, from, target, swapped, null);
+      try {
+        await swapped;
+      } finally {
         setLocking(null);
-        finish(false);
-        return;
       }
-      const swapped = await resolveAction(
-        onActionRef.current({ type: "swap", index: overCell })
-      );
-      setLocking(null);
-      finish(swapped != null);
       return;
     }
     if (origin.source === "deck") {
@@ -1109,11 +1195,18 @@ function Board({
         return;
       }
       clearDrag();
-      const finish = launchCard(overCell, drawn.hand, from, target);
-      const swapped = await resolveAction(
+      const swapped = resolveAction(
         onActionRef.current({ type: "swap", index: overCell })
       );
-      finish(swapped != null);
+      replaceCard(
+        overCell,
+        drawn.hand,
+        from,
+        target,
+        swapped,
+        viewRef.current.discardTop
+      );
+      await swapped;
       return;
     }
     if (origin.value === null) {
@@ -1121,11 +1214,18 @@ function Board({
       return;
     }
     clearDrag();
-    const finish = launchCard(overCell, origin.value, from, target);
-    const swapped = await resolveAction(
+    const swapped = resolveAction(
       onActionRef.current({ type: "swap", index: overCell })
     );
-    finish(swapped != null);
+    replaceCard(
+      overCell,
+      origin.value,
+      from,
+      target,
+      swapped,
+      viewRef.current.discardTop
+    );
+    await swapped;
   }
 
   function guarded(

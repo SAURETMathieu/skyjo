@@ -53,6 +53,7 @@ function room(partial: Partial<Room> & Pick<Room, "players" | "phase">): Room {
     lastRound: false,
     summary: null,
     uncovered: [],
+    exchange: null,
     lastEvent: "",
     feed: [],
     ...partial,
@@ -144,6 +145,13 @@ test("une colonne identique part sur la défausse après la carte échangée", (
   assert.equal(swapped.state.players[0]?.grid[0], null);
   assert.equal(swapped.state.players[0]?.grid[4], null);
   assert.equal(swapped.state.players[0]?.grid[8], null);
+  assert.deepEqual(swapped.state.exchange, {
+    playerId: host,
+    index: 8,
+    value: 9,
+    hidden: true,
+  });
+  assert.equal(project(swapped.state, host).exchange?.value, 9);
 });
 
 test("on peut encore piocher après avoir pris la défausse", () => {

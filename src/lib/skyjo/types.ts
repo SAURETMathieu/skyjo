@@ -53,6 +53,13 @@ export type RevealCard = {
   value: number;
 };
 
+export type Exchange = {
+  playerId: string;
+  index: number;
+  value: number;
+  hidden: boolean;
+};
+
 export type Room = {
   code: string;
   hostId: string;
@@ -69,6 +76,7 @@ export type Room = {
   lastRound: boolean;
   summary: RoundScore[] | null;
   uncovered: RevealCard[];
+  exchange: Exchange | null;
   lastEvent: string;
   feed: string[];
 };
@@ -144,6 +152,7 @@ export type GameView = {
   players: ViewPlayer[];
   summary: RoundScore[] | null;
   uncovered: RevealCard[];
+  exchange: { index: number; value: number; hidden: boolean } | null;
   winners: string[];
   flipsNeeded: number;
   actions: {
